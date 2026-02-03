@@ -4,6 +4,7 @@ package audit
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -208,13 +209,33 @@ func (r *Record) SetTimestamp(ts int64) *Record {
 	return r
 }
 
+// Copy returns a shallow copy of the record. The caller's record is unchanged.
+// Used internally so Log() can mask and write without mutating the original.
+func (r *Record) Copy() *Record {
+	if r == nil {
+		return nil
+	}
+	cp := *r
+	// Metadata is shared (shallow); we do not mutate it in Log()
+	return &cp
+}
+
 // ToJSON serializes the record to JSON
 func (r *Record) ToJSON() ([]byte, error) {
 	return json.Marshal(r)
 }
 
-// RecordFromJSON deserializes a record from JSON
+// MaxRecordJSONSize is the maximum allowed size for RecordFromJSON input (1MB).
+// Larger payloads are rejected to avoid DoS from unbounded unmarshaling.
+const MaxRecordJSONSize = 1 << 20
+
+// RecordFromJSON deserializes a record from JSON. Input larger than MaxRecordJSONSize
+// is rejected to prevent memory exhaustion. Metadata is unmarshaled as map[string]interface{}
+// without depth limit; do not pass untrusted JSON with deeply nested metadata.
 func RecordFromJSON(data []byte) (*Record, error) {
+	if len(data) > MaxRecordJSONSize {
+		return nil, fmt.Errorf("record JSON exceeds max size %d bytes", MaxRecordJSONSize)
+	}
 	var r Record
 	if err := json.Unmarshal(data, &r); err != nil {
 		return nil, err

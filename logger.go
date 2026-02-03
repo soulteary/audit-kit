@@ -87,35 +87,31 @@ func (l *Logger) Stop() error {
 	return nil
 }
 
-// Log records an audit event
+// Log records an audit event. The provided record is never modified; a copy is
+// made for masking and writing, so the caller may safely reuse the record.
 func (l *Logger) Log(ctx context.Context, record *Record) {
-	if !l.config.Enabled {
+	if !l.config.Enabled || record == nil {
 		return
 	}
 
-	// Set timestamp if not set
-	if record.Timestamp == 0 {
-		record.Timestamp = time.Now().Unix()
+	cp := record.Copy()
+	if cp.Timestamp == 0 {
+		cp.Timestamp = time.Now().Unix()
+	}
+	if l.config.MaskDestination && cp.Destination != "" {
+		cp.Destination = MaskDestination(cp.Destination, cp.Channel)
 	}
 
-	// Mask destination if configured
-	if l.config.MaskDestination && record.Destination != "" {
-		record.Destination = MaskDestination(record.Destination, record.Channel)
-	}
-
-	// Use async writer if available
 	if l.writer != nil {
-		l.writer.Enqueue(record)
+		l.writer.Enqueue(cp)
 	} else if l.storage != nil {
-		// Sync write
-		if err := l.storage.Write(ctx, record); err != nil {
+		if err := l.storage.Write(ctx, cp); err != nil {
 			log.Printf("[audit] Failed to write audit record: %v", err)
 		}
 	}
 
-	// Call log callback if set
 	if l.logCallback != nil {
-		l.logCallback(record)
+		l.logCallback(cp)
 	}
 }
 
@@ -157,10 +153,14 @@ func (l *Logger) LogAccess(ctx context.Context, eventType EventType, userID, res
 	l.Log(ctx, record)
 }
 
-// Query queries audit records from storage
+// Query queries audit records from storage. Filter is normalized (limit/offset)
+// before being passed to storage so behavior is consistent across backends.
 func (l *Logger) Query(ctx context.Context, filter *QueryFilter) ([]*Record, error) {
 	if l.storage == nil {
 		return nil, fmt.Errorf("storage not configured")
+	}
+	if filter != nil {
+		filter.Normalize()
 	}
 	return l.storage.Query(ctx, filter)
 }

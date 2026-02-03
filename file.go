@@ -20,7 +20,9 @@ type FileStorage struct {
 	mu       sync.Mutex
 }
 
-// NewFileStorage creates a new file storage instance
+// NewFileStorage creates a new file storage instance.
+// filePath must come from trusted configuration only; do not pass user-controlled
+// paths (path traversal or symlinks could write audit logs to unintended locations).
 func NewFileStorage(filePath string) (*FileStorage, error) {
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(filePath)
@@ -104,9 +106,11 @@ func (s *FileStorage) Query(ctx context.Context, filter *QueryFilter) ([]*Record
 	}
 	defer func() { _ = file.Close() }()
 
-	// Read all records
+	// Read all records. Use a larger buffer so lines up to MaxRecordJSONSize
+	// are read in full (default 64KB would truncate and drop records).
 	var allRecords []*Record
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64), MaxRecordJSONSize)
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
@@ -116,6 +120,10 @@ func (s *FileStorage) Query(ctx context.Context, filter *QueryFilter) ([]*Record
 
 		line := scanner.Bytes()
 		if len(line) == 0 {
+			continue
+		}
+		if len(line) > MaxRecordJSONSize {
+			// Skip oversized lines (e.g. malformed or DoS)
 			continue
 		}
 

@@ -7,10 +7,30 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 	_ "github.com/lib/pq"              // PostgreSQL driver
 )
+
+const maxTableNameLen = 64
+
+// validateTableName ensures table name is safe for SQL identifier use (no injection).
+// Only allows [a-zA-Z0-9_] and max 64 characters.
+func validateTableName(name string) error {
+	if name == "" {
+		return fmt.Errorf("table name cannot be empty")
+	}
+	if len(name) > maxTableNameLen {
+		return fmt.Errorf("table name too long: max %d characters", maxTableNameLen)
+	}
+	for _, r := range name {
+		if !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_' {
+			return fmt.Errorf("invalid table name: only alphanumeric and underscore allowed")
+		}
+	}
+	return nil
+}
 
 // DatabaseStorage implements Storage interface for database-based audit logging
 // Supports PostgreSQL and MySQL
@@ -42,6 +62,13 @@ func NewDatabaseStorageWithConfig(databaseURL string, config *DatabaseConfig) (*
 	if config == nil {
 		config = DefaultDatabaseConfig()
 	}
+	tableName := config.TableName
+	if tableName == "" {
+		tableName = "audit_logs"
+	}
+	if err := validateTableName(tableName); err != nil {
+		return nil, err
+	}
 
 	// Detect database type from URL
 	var dbType string
@@ -60,7 +87,8 @@ func NewDatabaseStorageWithConfig(databaseURL string, config *DatabaseConfig) (*
 		return nil, fmt.Errorf("unsupported database URL format, must start with postgres:// or mysql://")
 	}
 
-	// Open database connection
+	// Open database connection. When logging errors from this package, do not
+	// log error.Error() verbatim—drivers may include DSN/password in the message.
 	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -77,7 +105,7 @@ func NewDatabaseStorageWithConfig(databaseURL string, config *DatabaseConfig) (*
 	storage := &DatabaseStorage{
 		db:        db,
 		dbType:    dbType,
-		tableName: config.TableName,
+		tableName: tableName,
 	}
 
 	// Create table if it doesn't exist
@@ -94,6 +122,13 @@ func NewDatabaseStorageFromDB(db *sql.DB, dbType string, config *DatabaseConfig)
 	if config == nil {
 		config = DefaultDatabaseConfig()
 	}
+	tableName := config.TableName
+	if tableName == "" {
+		tableName = "audit_logs"
+	}
+	if err := validateTableName(tableName); err != nil {
+		return nil, err
+	}
 
 	if dbType != "postgres" && dbType != "mysql" && dbType != "sqlite" {
 		return nil, fmt.Errorf("unsupported database type: %s", dbType)
@@ -102,7 +137,7 @@ func NewDatabaseStorageFromDB(db *sql.DB, dbType string, config *DatabaseConfig)
 	storage := &DatabaseStorage{
 		db:        db,
 		dbType:    dbType,
-		tableName: config.TableName,
+		tableName: tableName,
 	}
 
 	// Create table if it doesn't exist
