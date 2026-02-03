@@ -30,8 +30,13 @@ func newMockStorage() *mockStorage {
 func (m *mockStorage) Write(ctx context.Context, record *Record) error {
 	if m.writeDelay > 0 {
 		if m.writeStarted != nil {
-			close(m.writeStarted)
+			m.mu.Lock()
+			ch := m.writeStarted
 			m.writeStarted = nil
+			m.mu.Unlock()
+			if ch != nil {
+				close(ch)
+			}
 		}
 		if m.writeBlockOnly {
 			time.Sleep(m.writeDelay)
@@ -68,6 +73,17 @@ func (m *mockStorage) getRecordCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.records)
+}
+
+// waitWriteStarted waits until Write has been entered (writeStarted closed).
+// Safe to call from test goroutine while worker may mutate writeStarted.
+func (m *mockStorage) waitWriteStarted() {
+	m.mu.Lock()
+	ch := m.writeStarted
+	m.mu.Unlock()
+	if ch != nil {
+		<-ch
+	}
 }
 
 func TestNewWriter(t *testing.T) {
@@ -268,7 +284,7 @@ func TestWriter_StopTimeout(t *testing.T) {
 
 	record := NewRecord(EventLoginSuccess, ResultSuccess)
 	writer.Enqueue(record)
-	<-store.writeStarted
+	store.waitWriteStarted()
 
 	// Worker is stuck in time.Sleep; Stop hits time.After branch
 	err := writer.Stop()
