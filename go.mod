@@ -8,7 +8,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/lib/pq v1.11.1
 	github.com/redis/go-redis/v9 v9.17.3
-	github.com/soulteary/secure-kit v1.1.1
+	github.com/soulteary/secure-kit v1.2.0
 	github.com/stretchr/testify v1.10.0
 	modernc.org/sqlite v1.44.3
 )
