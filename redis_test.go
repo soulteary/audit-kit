@@ -245,6 +245,137 @@ func TestRedisStorage_Cleanup(t *testing.T) {
 	assert.Equal(t, int64(0), removed)
 }
 
+// TestRedisStorage_Cleanup_RemovesStale verifies that Cleanup removes index entries whose keys expired.
+func TestRedisStorage_Cleanup_RemovesStale(t *testing.T) {
+	client, mr := newTestRedisClient(t)
+	defer mr.Close()
+	defer func() { _ = client.Close() }()
+
+	storage := NewRedisStorage(client)
+	setKey := storage.KeyPrefix() + "index"
+
+	// Add a stale member to the index (no corresponding record key)
+	err := client.ZAdd(context.Background(), setKey, redis.Z{Score: 1, Member: storage.KeyPrefix() + "1:stale"}).Err()
+	require.NoError(t, err)
+
+	removed, err := storage.Cleanup(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), removed)
+}
+
+func TestRedisStorage_Write_SetFails(t *testing.T) {
+	client, mr := newTestRedisClient(t)
+	defer mr.Close()
+	require.NoError(t, client.Close())
+
+	storage := NewRedisStorage(client)
+	record := NewRecord(EventLoginSuccess, ResultSuccess)
+	err := storage.Write(context.Background(), record)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to set key")
+}
+
+func TestRedisStorage_Write_ZAddFails(t *testing.T) {
+	client, mr := newTestRedisClient(t)
+	defer mr.Close()
+	defer func() { _ = client.Close() }()
+
+	storage := NewRedisStorage(client)
+	setKey := storage.KeyPrefix() + "index"
+	// Make index key a string so ZAdd fails (wrong type)
+	require.NoError(t, client.Set(context.Background(), setKey, "not-a-sorted-set", 0).Err())
+
+	record := NewRecord(EventLoginSuccess, ResultSuccess).WithUserID("u1")
+	err := storage.Write(context.Background(), record)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to add to sorted set")
+}
+
+func TestRedisStorage_Query_ZRevRangeFails(t *testing.T) {
+	client, mr := newTestRedisClient(t)
+	defer mr.Close()
+	require.NoError(t, client.Close())
+
+	storage := NewRedisStorage(client)
+	_, err := storage.Query(context.Background(), DefaultQueryFilter())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get keys")
+}
+
+func TestRedisStorage_Cleanup_ZRangeFails(t *testing.T) {
+	client, mr := newTestRedisClient(t)
+	defer mr.Close()
+	require.NoError(t, client.Close())
+
+	storage := NewRedisStorage(client)
+	_, err := storage.Cleanup(context.Background())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get keys")
+}
+
+// TestRedisStorage_Query_ExpiredKey verifies that when a key in the index has expired (redis.Nil),
+// Query skips it and removes it from the index.
+func TestRedisStorage_Query_ExpiredKey(t *testing.T) {
+	client, mr := newTestRedisClient(t)
+	defer mr.Close()
+	defer func() { _ = client.Close() }()
+
+	storage := NewRedisStorage(client)
+	record := NewRecord(EventLoginSuccess, ResultSuccess).WithUserID("u1")
+	err := storage.Write(context.Background(), record)
+	require.NoError(t, err)
+
+	// Delete the record key but leave the index entry (simulates TTL expiry)
+	keys, err := client.Keys(context.Background(), storage.KeyPrefix()+"*").Result()
+	require.NoError(t, err)
+	for _, k := range keys {
+		if k != storage.KeyPrefix()+"index" {
+			_ = client.Del(context.Background(), k).Err()
+			break
+		}
+	}
+
+	results, err := storage.Query(context.Background(), DefaultQueryFilter())
+	require.NoError(t, err)
+	assert.Len(t, results, 0)
+}
+
+// TestRedisStorage_Query_PaginationOffsetBeyondResults verifies start >= len(records) returns empty.
+func TestRedisStorage_Query_PaginationOffsetBeyondResults(t *testing.T) {
+	client, mr := newTestRedisClient(t)
+	defer mr.Close()
+	defer func() { _ = client.Close() }()
+
+	storage := NewRedisStorage(client)
+	err := storage.Write(context.Background(), NewRecord(EventLoginSuccess, ResultSuccess))
+	require.NoError(t, err)
+
+	filter := DefaultQueryFilter().WithLimit(10).WithOffset(100)
+	results, err := storage.Query(context.Background(), filter)
+	require.NoError(t, err)
+	assert.Len(t, results, 0)
+}
+
+// TestRedisStorage_Query_InvalidJSONInKey skips keys whose value is not valid record JSON.
+func TestRedisStorage_Query_InvalidJSONInKey(t *testing.T) {
+	client, mr := newTestRedisClient(t)
+	defer mr.Close()
+	defer func() { _ = client.Close() }()
+
+	storage := NewRedisStorage(client)
+	setKey := storage.KeyPrefix() + "index"
+	badKey := storage.KeyPrefix() + "1:bad"
+	// Add index entry and set value to invalid JSON
+	err := client.ZAdd(context.Background(), setKey, redis.Z{Score: 1, Member: badKey}).Err()
+	require.NoError(t, err)
+	err = client.Set(context.Background(), badKey, "not valid json", 0).Err()
+	require.NoError(t, err)
+
+	results, err := storage.Query(context.Background(), DefaultQueryFilter())
+	require.NoError(t, err)
+	assert.Len(t, results, 0)
+}
+
 func TestRedisStorage_Close(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()

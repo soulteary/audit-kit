@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -259,6 +260,33 @@ func TestMultiStorage_CloseError(t *testing.T) {
 	// Close should close all storages
 	err = multi.Close()
 	assert.NoError(t, err)
+}
+
+// failingCloseStorage is a Storage that returns an error on Close.
+type failingCloseStorage struct {
+	Storage
+	closeErr error
+}
+
+func (f *failingCloseStorage) Close() error {
+	if f.closeErr != nil {
+		return f.closeErr
+	}
+	return f.Storage.Close()
+}
+
+func TestMultiStorage_CloseReturnsFirstError(t *testing.T) {
+	tempDir := t.TempDir()
+	fileStorage, err := NewFileStorage(filepath.Join(tempDir, "audit.log"))
+	require.NoError(t, err)
+
+	closeErr := errors.New("close failed")
+	failing := &failingCloseStorage{Storage: fileStorage, closeErr: closeErr}
+	multi := NewMultiStorage(failing)
+
+	err = multi.Close()
+	assert.Error(t, err)
+	assert.Equal(t, closeErr, err)
 }
 
 func TestNewStorageFromType_DatabaseWithTableName(t *testing.T) {

@@ -3,6 +3,7 @@ module github.com/soulteary/audit-kit
 go 1.25
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/alicebob/miniredis/v2 v2.36.1
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/lib/pq v1.11.1

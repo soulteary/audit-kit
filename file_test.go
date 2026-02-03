@@ -1,9 +1,11 @@
 package audit
 
 import (
+	"bufio"
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +27,28 @@ func TestNewFileStorage(t *testing.T) {
 	// Verify file was created
 	_, err = os.Stat(filePath)
 	assert.NoError(t, err)
+}
+
+func TestNewFileStorage_MkdirAllFails(t *testing.T) {
+	tempDir := t.TempDir()
+	// Create a file named "blocker"; then path blocker/audit.log cannot have directory blocker created
+	blocker := filepath.Join(tempDir, "blocker")
+	f, err := os.Create(blocker)
+	require.NoError(t, err)
+	_ = f.Close()
+
+	filePath := filepath.Join(blocker, "audit.log")
+	_, err = NewFileStorage(filePath)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create directory")
+}
+
+func TestNewFileStorage_OpenFileFails(t *testing.T) {
+	tempDir := t.TempDir()
+	// Pass a path that is an existing directory; OpenFile will fail with "is a directory"
+	_, err := NewFileStorage(tempDir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to open file")
 }
 
 func TestNewFileStorage_CreateDir(t *testing.T) {
@@ -61,6 +85,40 @@ func TestFileStorage_Write(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "login_success")
 	assert.Contains(t, string(data), "user123")
+}
+
+func TestFileStorage_Write_MarshalError(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "audit.log")
+
+	storage, err := NewFileStorage(filePath)
+	require.NoError(t, err)
+	defer func() { _ = storage.Close() }()
+
+	record := NewRecord(EventLoginSuccess, ResultSuccess)
+	record.Metadata = map[string]interface{}{"bad": make(chan int)} // chan cannot be JSON marshaled
+
+	err = storage.Write(context.Background(), record)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "marshal")
+}
+
+func TestFileStorage_Write_WriteOrFlushFails(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "audit.log")
+
+	storage, err := NewFileStorage(filePath)
+	require.NoError(t, err)
+	defer func() { _ = storage.Close() }()
+
+	// Close underlying file so next Write hits write/flush error
+	_ = storage.file.Close()
+
+	record := NewRecord(EventLoginSuccess, ResultSuccess)
+	err = storage.Write(context.Background(), record)
+	assert.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "failed to write") ||
+		strings.Contains(err.Error(), "failed to flush"), "err: %v", err)
 }
 
 func TestFileStorage_Query(t *testing.T) {
@@ -205,6 +263,83 @@ func TestFileStorage_Query_NonExistentFile(t *testing.T) {
 	results, err := storage.Query(context.Background(), DefaultQueryFilter())
 	require.NoError(t, err)
 	assert.Len(t, results, 0)
+}
+
+// TestFileStorage_Query_OpenFailsNonNotExist covers Query when Open fails with an error other than IsNotExist.
+func TestFileStorage_Query_OpenFailsNonNotExist(t *testing.T) {
+	tempDir := t.TempDir()
+	noPermFile := filepath.Join(tempDir, "noperm.log")
+	require.NoError(t, os.WriteFile(noPermFile, []byte{}, 0000))
+	defer func() { _ = os.Chmod(noPermFile, 0644) }()
+
+	dummyFile := filepath.Join(tempDir, "dummy")
+	f, err := os.Create(dummyFile)
+	require.NoError(t, err)
+	storage := &FileStorage{
+		filePath: noPermFile,
+		file:     f,
+		writer:   bufio.NewWriter(f),
+	}
+	defer func() { _ = f.Close() }()
+
+	_, err = storage.Query(context.Background(), DefaultQueryFilter())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to open file for reading")
+}
+
+// TestFileStorage_Query_ScannerErr covers Query when scanner.Err() returns after reading (e.g. path is a directory).
+func TestFileStorage_Query_ScannerErr(t *testing.T) {
+	tempDir := t.TempDir()
+	subDir := filepath.Join(tempDir, "sub")
+	require.NoError(t, os.MkdirAll(subDir, 0755))
+	dummyFile := filepath.Join(tempDir, "dummy")
+	f, err := os.Create(dummyFile)
+	require.NoError(t, err)
+	storage := &FileStorage{filePath: subDir, file: f, writer: bufio.NewWriter(f)}
+	defer func() { _ = f.Close() }()
+
+	_, err = storage.Query(context.Background(), DefaultQueryFilter())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read file")
+}
+
+func TestFileStorage_Rotate_FlushFails(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "audit.log")
+
+	storage, err := NewFileStorage(filePath)
+	require.NoError(t, err)
+	defer func() { _ = storage.Close() }()
+
+	_ = storage.Write(context.Background(), NewRecord(EventLoginSuccess, ResultSuccess))
+	_ = storage.file.Close()
+
+	err = storage.Rotate()
+	assert.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "failed to flush writer") ||
+		strings.Contains(err.Error(), "failed to close file"), "err: %v", err)
+}
+
+func TestFileStorage_Rotate_RenameFails(t *testing.T) {
+	tempDir := t.TempDir()
+	subDir := filepath.Join(tempDir, "sub")
+	require.NoError(t, os.MkdirAll(subDir, 0755))
+	filePath := filepath.Join(subDir, "audit.log")
+
+	storage, err := NewFileStorage(filePath)
+	require.NoError(t, err)
+	defer func() {
+		_ = os.Chmod(subDir, 0755)
+		_ = storage.Close()
+	}()
+
+	_ = storage.Write(context.Background(), NewRecord(EventLoginSuccess, ResultSuccess))
+	// Make directory read-only so Rename inside Rotate fails
+	require.NoError(t, os.Chmod(subDir, 0444))
+
+	err = storage.Rotate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to rename")
 }
 
 func TestFileStorage_Rotate(t *testing.T) {
@@ -596,4 +731,68 @@ func TestFileStorage_FilePath(t *testing.T) {
 	defer func() { _ = storage.Close() }()
 
 	assert.Equal(t, filePath, storage.FilePath())
+}
+
+// TestFileStorage_Query_FileDeletedAfterCreate verifies that Query returns empty when the file
+// is removed from the filesystem (e.g. by another process) while storage still holds the path.
+func TestFileStorage_Query_FileDeletedAfterCreate(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "audit.log")
+
+	storage, err := NewFileStorage(filePath)
+	require.NoError(t, err)
+	defer func() { _ = storage.Close() }()
+
+	_ = storage.Write(context.Background(), NewRecord(EventLoginSuccess, ResultSuccess))
+
+	// On Unix, removing an open file unlinks it; Query opens by path and gets IsNotExist
+	_ = os.Remove(filePath)
+
+	results, err := storage.Query(context.Background(), DefaultQueryFilter())
+	require.NoError(t, err)
+	assert.Len(t, results, 0)
+}
+
+func TestFileStorage_Query_OpenFileFails(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "audit.log")
+
+	storage, err := NewFileStorage(filePath)
+	require.NoError(t, err)
+	defer func() { _ = storage.Close() }()
+	_ = storage.Write(context.Background(), NewRecord(EventLoginSuccess, ResultSuccess))
+
+	// Remove read permission so Query's os.Open fails when opening for read (Unix)
+	_ = os.Chmod(filePath, 0o000)
+	defer func() { _ = os.Chmod(filePath, 0o644) }()
+
+	_, err = storage.Query(context.Background(), DefaultQueryFilter())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to open file")
+}
+
+// TestFileStorage_Query_OversizedLine verifies that a line longer than MaxRecordJSONSize
+// causes bufio.Scanner to error (token too long); Query returns that error.
+func TestFileStorage_Query_OversizedLine(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "audit.log")
+
+	f, err := os.Create(filePath)
+	require.NoError(t, err)
+	_, _ = f.WriteString("{\"event_type\":\"login_success\",\"result\":\"success\",\"timestamp\":1}\n")
+	// Line longer than MaxRecordJSONSize (1MB) causes scanner to fail
+	oversized := make([]byte, MaxRecordJSONSize+1)
+	oversized[0] = '{'
+	oversized[1] = '}'
+	_, _ = f.Write(oversized)
+	_, _ = f.WriteString("\n")
+	_ = f.Close()
+
+	storage, err := NewFileStorage(filePath)
+	require.NoError(t, err)
+	defer func() { _ = storage.Close() }()
+
+	_, err = storage.Query(context.Background(), DefaultQueryFilter())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "token too long")
 }

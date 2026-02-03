@@ -13,10 +13,12 @@ import (
 
 // mockStorage is a thread-safe mock storage for testing
 type mockStorage struct {
-	mu          sync.Mutex
-	records     []*Record
-	shouldError bool
-	writeDelay  time.Duration
+	mu             sync.Mutex
+	records        []*Record
+	shouldError    bool
+	writeDelay     time.Duration
+	writeStarted   chan struct{} // if set, closed when Write is entered
+	writeBlockOnly bool          // if true, block without listening to ctx (for Stop timeout branch)
 }
 
 func newMockStorage() *mockStorage {
@@ -27,10 +29,18 @@ func newMockStorage() *mockStorage {
 
 func (m *mockStorage) Write(ctx context.Context, record *Record) error {
 	if m.writeDelay > 0 {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(m.writeDelay):
+		if m.writeStarted != nil {
+			close(m.writeStarted)
+			m.writeStarted = nil
+		}
+		if m.writeBlockOnly {
+			time.Sleep(m.writeDelay)
+		} else {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(m.writeDelay):
+			}
 		}
 	}
 
@@ -244,23 +254,36 @@ func TestWriter_GetStats(t *testing.T) {
 
 func TestWriter_StopTimeout(t *testing.T) {
 	store := newMockStorage()
-	store.writeDelay = 500 * time.Millisecond
+	store.writeDelay = 24 * time.Hour
+	store.writeStarted = make(chan struct{})
+	store.writeBlockOnly = true // block without listening to ctx so Stop hits timeout branch
 
 	writer := NewWriter(store, &WriterConfig{
 		QueueSize:   10,
 		Workers:     1,
-		StopTimeout: 100 * time.Millisecond, // Short timeout
+		StopTimeout: 50 * time.Millisecond,
 	})
 
 	writer.Start()
 
-	// Enqueue a record
 	record := NewRecord(EventLoginSuccess, ResultSuccess)
 	writer.Enqueue(record)
+	<-store.writeStarted
 
-	// Stop should timeout quickly
+	// Worker is stuck in time.Sleep; Stop hits time.After branch
 	err := writer.Stop()
 	assert.NoError(t, err)
+}
+
+func TestWriter_GetStats_WhenStopped(t *testing.T) {
+	store := newMockStorage()
+	writer := NewWriter(store, &WriterConfig{QueueSize: 10, Workers: 1})
+	writer.Start()
+	_ = writer.Stop()
+
+	stats := writer.GetStats()
+	assert.True(t, stats.Stopped)
+	assert.Equal(t, 0, stats.QueueLength)
 }
 
 func TestWriter_DrainOnStop(t *testing.T) {
