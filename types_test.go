@@ -101,6 +101,38 @@ func TestRecordFromJSON_Invalid(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestRecordFromJSON_ExceedsMaxSize(t *testing.T) {
+	big := make([]byte, MaxRecordJSONSize+1)
+	big[0] = '{'
+	big[1] = '}'
+	_, err := RecordFromJSON(big)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds max size")
+}
+
+func TestRecord_Copy(t *testing.T) {
+	orig := NewRecord(EventLoginSuccess, ResultSuccess).
+		WithUserID("user123").
+		WithDestination("a@b.com")
+	orig.Metadata = map[string]interface{}{"k": "v"}
+
+	cp := orig.Copy()
+	require.NotNil(t, cp)
+	assert.Equal(t, orig.EventType, cp.EventType)
+	assert.Equal(t, orig.UserID, cp.UserID)
+	assert.Equal(t, orig.Destination, cp.Destination)
+	// Metadata is shallow-shared
+	assert.Equal(t, orig.Metadata, cp.Metadata)
+
+	cp.Destination = "x@y.com"
+	assert.Equal(t, "a@b.com", orig.Destination, "original unchanged")
+}
+
+func TestRecord_CopyNil(t *testing.T) {
+	var r *Record
+	assert.Nil(t, r.Copy())
+}
+
 func TestEventTypes(t *testing.T) {
 	eventTypes := []EventType{
 		EventChallengeCreated,

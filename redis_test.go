@@ -70,6 +70,28 @@ func TestRedisStorage_Write(t *testing.T) {
 	assert.Len(t, keys, 2) // record key + index
 }
 
+func TestRedisStorage_Write_SameSecondNoID(t *testing.T) {
+	client, mr := newTestRedisClient(t)
+	defer mr.Close()
+	defer func() { _ = client.Close() }()
+
+	storage := NewRedisStorage(client)
+	now := time.Now().Unix()
+
+	// Two records in same second with no EventID/ChallengeID/UserID must get distinct keys
+	r1 := NewRecord(EventLoginSuccess, ResultSuccess).SetTimestamp(now)
+	r2 := NewRecord(EventLoginFailed, ResultFailure).SetTimestamp(now)
+
+	err := storage.Write(context.Background(), r1)
+	require.NoError(t, err)
+	err = storage.Write(context.Background(), r2)
+	require.NoError(t, err)
+
+	results, err := storage.Query(context.Background(), DefaultQueryFilter().WithLimit(10))
+	require.NoError(t, err)
+	assert.Len(t, results, 2, "both records must be stored with unique keys")
+}
+
 func TestRedisStorage_Query(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()

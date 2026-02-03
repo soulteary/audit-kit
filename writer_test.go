@@ -462,3 +462,30 @@ func TestWriter_StopWithStopping(t *testing.T) {
 	stats := writer.GetStats()
 	assert.True(t, stats.Stopped)
 }
+
+func TestWriter_EnqueueAfterStop(t *testing.T) {
+	store := newMockStorage()
+	writer := NewWriter(store, &WriterConfig{
+		QueueSize: 10,
+		Workers:   1,
+	})
+	writer.Start()
+	err := writer.Stop()
+	require.NoError(t, err)
+
+	// Enqueue after Stop must not panic and must return false
+	for i := 0; i < 3; i++ {
+		ok := writer.Enqueue(NewRecord(EventLoginSuccess, ResultSuccess))
+		assert.False(t, ok, "Enqueue after Stop should return false")
+	}
+}
+
+func TestWriter_EnqueueNilRecord(t *testing.T) {
+	store := newMockStorage()
+	writer := NewWriter(store, &WriterConfig{QueueSize: 10, Workers: 1})
+	writer.Start()
+	defer func() { _ = writer.Stop() }()
+
+	ok := writer.Enqueue(nil)
+	assert.False(t, ok)
+}

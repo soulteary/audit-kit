@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -337,6 +338,29 @@ func TestNewDatabaseStorage_InvalidURL(t *testing.T) {
 	// Test short URL
 	_, err = NewDatabaseStorage("short")
 	assert.Error(t, err)
+}
+
+func TestNewDatabaseStorageFromDB_InvalidTableName(t *testing.T) {
+	db := newTestSQLiteDB(t)
+	defer func() { _ = db.Close() }()
+
+	tests := []struct {
+		name      string
+		tableName string
+	}{
+		{"SQL injection", "audit_logs; DROP TABLE audit_logs--"},
+		{"space", "audit logs"},
+		{"too long", strings.Repeat("a", maxTableNameLen+1)},
+		{"hyphen", "audit-logs"},
+		{"dot", "audit.logs"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &DatabaseConfig{TableName: tt.tableName}
+			_, err := NewDatabaseStorageFromDB(db, "sqlite", config)
+			assert.Error(t, err)
+		})
+	}
 }
 
 func TestNewDatabaseStorageFromDB_UnsupportedType(t *testing.T) {

@@ -113,6 +113,33 @@ func TestLogger_Log_MaskDestination(t *testing.T) {
 	assert.Equal(t, "u***@example.com", records[0].Destination)
 }
 
+func TestLogger_Log_NilRecord(t *testing.T) {
+	store := newTestStorage()
+	logger := NewLogger(store, nil)
+
+	// Must not panic
+	logger.Log(context.Background(), nil)
+
+	records := store.getRecords()
+	assert.Len(t, records, 0)
+}
+
+func TestLogger_Log_DoesNotMutateRecord(t *testing.T) {
+	store := newTestStorage()
+	config := DefaultConfig()
+	config.MaskDestination = true
+	logger := NewLogger(store, config)
+
+	record := NewRecord(EventChallengeCreated, ResultSuccess).
+		WithChannel("email").
+		WithDestination("user@example.com")
+
+	logger.Log(context.Background(), record)
+
+	// Caller's record must be unchanged (Log copies before masking)
+	assert.Equal(t, "user@example.com", record.Destination)
+}
+
 func TestLogger_Log_NoMasking(t *testing.T) {
 	store := newTestStorage()
 	config := DefaultConfig()
@@ -233,6 +260,19 @@ func TestLogger_Query_NoStorage(t *testing.T) {
 
 	_, err := logger.Query(context.Background(), DefaultQueryFilter())
 	assert.Error(t, err)
+}
+
+func TestLogger_Query_NormalizesFilter(t *testing.T) {
+	store := newTestStorage()
+	logger := NewLogger(store, nil)
+	logger.Log(context.Background(), NewRecord(EventLoginSuccess, ResultSuccess).WithUserID("u1"))
+
+	// Filter with invalid values; Logger normalizes before passing to storage
+	filter := DefaultQueryFilter().WithLimit(0).WithOffset(-1)
+	results, err := logger.Query(context.Background(), filter)
+	require.NoError(t, err)
+	// Normalized to Limit 100, Offset 0; testStorage returns all records
+	assert.Len(t, results, 1)
 }
 
 func TestLogger_WithAsyncWriter(t *testing.T) {

@@ -139,14 +139,23 @@ func (w *Writer) Stop() error {
 	return nil
 }
 
-// Enqueue enqueues an audit record for asynchronous writing
-// Returns false if queue is full (non-blocking)
+// Enqueue enqueues an audit record for asynchronous writing.
+// Returns false if record is nil, the writer is stopped, or the queue is full (non-blocking).
+// Safe to call after Stop(); will return false instead of panicking.
 func (w *Writer) Enqueue(record *Record) bool {
+	if record == nil {
+		return false
+	}
+	w.mu.Lock()
+	stopped := w.stopped
+	w.mu.Unlock()
+	if stopped {
+		return false
+	}
 	select {
 	case w.queue <- record:
 		return true
 	default:
-		// Queue is full
 		if w.onEnqueueFailed != nil {
 			w.onEnqueueFailed(record)
 		} else {

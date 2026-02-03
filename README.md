@@ -35,7 +35,7 @@ import (
     audit "github.com/soulteary/audit-kit"
 )
 
-// Create a file storage
+// Create a file storage (filePath must be from trusted config, not user input)
 storage, err := audit.NewFileStorage("/var/log/audit.log")
 if err != nil {
     log.Fatal(err)
@@ -318,6 +318,14 @@ func main() {
     )
 }
 ```
+
+## Security and operational notes
+
+- **File storage**: Pass only trusted paths to `NewFileStorage`; do not use user-controlled paths (path traversal or symlinks could write logs elsewhere).
+- **Database errors**: When logging errors from database storage, avoid logging `error.Error()` verbatim—drivers may include DSN or passwords. Use fixed messages or error type checks instead.
+- **Async queue full**: When the writer queue is full, records are dropped (non-blocking). Use `OnEnqueueFailed` to alert or write to a fallback; size the queue appropriately for your load.
+- **Redis**: Prefer setting `EventID` or `ChallengeID` on records so keys are unique. The index key has no TTL; call `Cleanup()` periodically or run a job to remove expired key references from the index.
+- **Metadata**: After JSON round-trip, numeric metadata values become `float64`; document this if your code type-asserts metadata.
 
 ## Requirements
 

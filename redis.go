@@ -2,6 +2,8 @@ package audit
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -59,7 +61,7 @@ func NewRedisStorageWithConfig(client *redis.Client, config *RedisConfig) *Redis
 
 // Write writes an audit record to Redis
 func (s *RedisStorage) Write(ctx context.Context, record *Record) error {
-	// Generate key: prefix:{timestamp}:{id}
+	// Generate key: prefix:{timestamp}:{id} so same-second records do not overwrite
 	var key string
 	if record.EventID != "" {
 		key = fmt.Sprintf("%s%d:%s", s.keyPrefix, record.Timestamp, record.EventID)
@@ -68,7 +70,12 @@ func (s *RedisStorage) Write(ctx context.Context, record *Record) error {
 	} else if record.UserID != "" {
 		key = fmt.Sprintf("%s%d:%s", s.keyPrefix, record.Timestamp, record.UserID)
 	} else {
-		key = fmt.Sprintf("%s%d", s.keyPrefix, record.Timestamp)
+		// No IDs: use unique suffix to avoid overwriting records in the same second
+		b := make([]byte, 8)
+		if _, err := rand.Read(b); err != nil {
+			return fmt.Errorf("failed to generate key: %w", err)
+		}
+		key = fmt.Sprintf("%s%d:%s", s.keyPrefix, record.Timestamp, hex.EncodeToString(b))
 	}
 
 	// Marshal record to JSON
