@@ -57,6 +57,7 @@ func TestRedisStorage_Write(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	storage := NewRedisStorage(client)
+	setKey := storage.KeyPrefix() + "index"
 
 	record := NewRecord(EventLoginSuccess, ResultSuccess).
 		WithUserID("user123").
@@ -68,6 +69,8 @@ func TestRedisStorage_Write(t *testing.T) {
 	// Verify key was created
 	keys := mr.Keys()
 	assert.Len(t, keys, 2) // record key + index
+	assert.Greater(t, mr.TTL(setKey), time.Duration(0), "index TTL should be set")
+	assert.LessOrEqual(t, mr.TTL(setKey), storage.TTL())
 }
 
 func TestRedisStorage_Write_SameSecondNoID(t *testing.T) {
