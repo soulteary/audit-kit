@@ -25,8 +25,9 @@ func TestNewFileStorage(t *testing.T) {
 	assert.Equal(t, filePath, storage.FilePath())
 
 	// Verify file was created
-	_, err = os.Stat(filePath)
+	info, err := os.Stat(filePath)
 	assert.NoError(t, err)
+	assert.Zero(t, info.Mode().Perm()&0o077, "file should not be readable by group/other")
 }
 
 func TestNewFileStorage_MkdirAllFails(t *testing.T) {
@@ -61,8 +62,24 @@ func TestNewFileStorage_CreateDir(t *testing.T) {
 	defer func() { _ = storage.Close() }()
 
 	// Verify directory was created
-	_, err = os.Stat(filepath.Dir(filePath))
+	dirInfo, err := os.Stat(filepath.Dir(filePath))
 	assert.NoError(t, err)
+	assert.True(t, dirInfo.IsDir())
+	assert.Zero(t, dirInfo.Mode().Perm()&0o077, "directory should not be accessible by group/other")
+}
+
+func TestNewFileStorage_RefusesSymlink(t *testing.T) {
+	tempDir := t.TempDir()
+	target := filepath.Join(tempDir, "target.log")
+	err := os.WriteFile(target, []byte("data"), 0600)
+	require.NoError(t, err)
+
+	linkPath := filepath.Join(tempDir, "audit.log")
+	require.NoError(t, os.Symlink(target, linkPath))
+
+	_, err = NewFileStorage(linkPath)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing to open symlink")
 }
 
 func TestFileStorage_Write(t *testing.T) {

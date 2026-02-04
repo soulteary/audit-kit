@@ -98,6 +98,12 @@ func (s *RedisStorage) Write(ctx context.Context, record *Record) error {
 	if err := s.client.ZAdd(ctx, setKey, member).Err(); err != nil {
 		return fmt.Errorf("failed to add to sorted set: %w", err)
 	}
+	// Keep index key aligned with record TTL to avoid long-lived metadata.
+	if s.ttl > 0 {
+		if err := s.client.Expire(ctx, setKey, s.ttl).Err(); err != nil {
+			return fmt.Errorf("failed to set index ttl: %w", err)
+		}
+	}
 
 	return nil
 }

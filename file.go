@@ -26,12 +26,20 @@ type FileStorage struct {
 func NewFileStorage(filePath string) (*FileStorage, error) {
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
+	if fi, err := os.Lstat(filePath); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("refusing to open symlink path: %s", filePath)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("failed to stat file: %w", err)
+	}
+
 	// Open file in append mode
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
@@ -205,7 +213,7 @@ func (s *FileStorage) Rotate() error {
 	}
 
 	// Open new file
-	file, err := os.OpenFile(s.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(s.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to open new file: %w", err)
 	}

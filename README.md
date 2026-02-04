@@ -180,6 +180,13 @@ logger.SetLogCallback(func(record *audit.Record) {
 })
 ```
 
+## Security & Operational Notes
+
+- **File storage paths must be trusted**. The file backend refuses symlinks and creates files with `0600` permissions to limit exposure. Ensure the log directory is secured and not user-writable.
+- **Async writer drops on backpressure**. If the queue is full, records are dropped. Monitor queue/worker capacity in production.
+- **Redis index TTL**. The index key uses the same TTL as records to avoid long-lived metadata; plan cleanup/retention accordingly.
+- **Untrusted JSON**. `RecordFromJSON` enforces size limits but does not cap nested metadata depth. Avoid decoding untrusted deeply nested JSON.
+
 ## Event Types
 
 ### Built-in Event Types
