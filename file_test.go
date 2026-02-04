@@ -82,6 +82,20 @@ func TestNewFileStorage_RefusesSymlink(t *testing.T) {
 	assert.Contains(t, err.Error(), "refusing to open symlink")
 }
 
+func TestNewFileStorage_RefusesSymlinkParent(t *testing.T) {
+	tempDir := t.TempDir()
+	targetDir := filepath.Join(tempDir, "target")
+	require.NoError(t, os.MkdirAll(targetDir, 0700))
+
+	linkDir := filepath.Join(tempDir, "logs")
+	require.NoError(t, os.Symlink(targetDir, linkDir))
+
+	filePath := filepath.Join(linkDir, "audit.log")
+	_, err := NewFileStorage(filePath)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing to use symlinked path component")
+}
+
 func TestFileStorage_Write(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "audit.log")

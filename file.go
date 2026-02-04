@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -24,31 +25,76 @@ type FileStorage struct {
 // filePath must come from trusted configuration only; do not pass user-controlled
 // paths (path traversal or symlinks could write audit logs to unintended locations).
 func NewFileStorage(filePath string) (*FileStorage, error) {
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve file path: %w", err)
+	}
 	// Create directory if it doesn't exist
-	dir := filepath.Dir(filePath)
+	dir := filepath.Dir(absPath)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	if fi, err := os.Lstat(filePath); err == nil {
+	if err := ensureNoSymlink(dir); err != nil {
+		return nil, err
+	}
+
+	if fi, err := os.Lstat(absPath); err == nil {
 		if fi.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("refusing to open symlink path: %s", filePath)
+			return nil, fmt.Errorf("refusing to open symlink path: %s", absPath)
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 
 	// Open file in append mode
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	file, err := os.OpenFile(absPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
 
 	return &FileStorage{
-		filePath: filePath,
+		filePath: absPath,
 		file:     file,
 		writer:   bufio.NewWriter(file),
 	}, nil
+}
+
+func ensureNoSymlink(path string) error {
+	clean := filepath.Clean(path)
+	absPath, err := filepath.Abs(clean)
+	if err != nil {
+		return fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	volume := filepath.VolumeName(absPath)
+	rest := strings.TrimPrefix(absPath, volume)
+	rest = strings.TrimPrefix(rest, string(os.PathSeparator))
+	parts := strings.Split(rest, string(os.PathSeparator))
+
+	current := volume
+	if current == "" {
+		current = string(os.PathSeparator)
+	}
+
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if current == string(os.PathSeparator) || current == "" {
+			current = filepath.Join(current, part)
+		} else {
+			current = filepath.Join(current, part)
+		}
+		fi, err := os.Lstat(current)
+		if err != nil {
+			return fmt.Errorf("failed to stat path: %w", err)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to use symlinked path component: %s", current)
+		}
+	}
+	return nil
 }
 
 // Write writes an audit record to the file (JSON Lines format)
