@@ -124,12 +124,15 @@ func (s *RedisStorage) Query(ctx context.Context, filter *QueryFilter) ([]*Recor
 		max = "+inf"
 	}
 
-	// Get keys in descending order (newest first)
-	keys, err := s.client.ZRevRangeByScore(ctx, setKey, &redis.ZRangeBy{
-		Min:    min,
-		Max:    max,
-		Offset: 0,
-		Count:  int64(filter.Limit + filter.Offset + 100), // Get extra for filtering
+	// Get keys in descending order (newest first); ZRangeArgs replaces deprecated ZRevRangeByScore (Redis 6.2+)
+	keys, err := s.client.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key:     setKey,
+		Start:   min,
+		Stop:    max,
+		ByScore: true,
+		Rev:     true,
+		Offset:  0,
+		Count:   int64(filter.Limit + filter.Offset + 100), // Get extra for filtering
 	}).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get keys: %w", err)
