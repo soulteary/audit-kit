@@ -329,7 +329,7 @@ func main() {
 
 ## Requirements
 
-- Go 1.25 or later
+- Go 1.26 or later
 - Optional: github.com/redis/go-redis/v9 (for Redis storage)
 - Optional: github.com/go-sql-driver/mysql or github.com/lib/pq (for database storage)
 

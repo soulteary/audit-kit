@@ -329,7 +329,7 @@ func main() {
 
 ## 要求
 
-- Go 1.25 或更高版本
+- Go 1.26 或更高版本
 - 可选：github.com/redis/go-redis/v9（用于 Redis 存储）
 - 可选：github.com/go-sql-driver/mysql 或 github.com/lib/pq（用于数据库存储）
 
