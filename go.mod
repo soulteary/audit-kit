@@ -1,6 +1,6 @@
 module github.com/soulteary/audit-kit
 
-go 1.26
+go 1.26.6
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
