@@ -20,6 +20,15 @@ type Config struct {
 
 	// Writer configuration (for async writing)
 	Writer *WriterConfig
+
+	// OnEnqueueFailed, if set, is invoked when an async record is dropped
+	// because the writer queue is full. Callers can use it to increment a
+	// drop-counter metric or emit an alert so silent audit loss is observable.
+	OnEnqueueFailed func(record *Record)
+
+	// OnWriteFailed, if set, is invoked when a record fails to persist to the
+	// backing storage.
+	OnWriteFailed func(record *Record, err error)
 }
 
 // DefaultConfig returns default audit configuration
@@ -61,6 +70,12 @@ func NewLoggerWithWriter(storage Storage, config *Config) *Logger {
 	}
 
 	writer := NewWriter(storage, config.Writer)
+	if config.OnEnqueueFailed != nil {
+		writer.OnEnqueueFailed(config.OnEnqueueFailed)
+	}
+	if config.OnWriteFailed != nil {
+		writer.OnWriteFailed(config.OnWriteFailed)
+	}
 	writer.Start()
 
 	return &Logger{
