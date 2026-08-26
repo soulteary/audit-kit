@@ -1,6 +1,6 @@
 module github.com/soulteary/audit-kit
 
-go 1.26.6
+go 1.27.0
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
@@ -8,7 +8,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/lib/pq v1.12.3
 	github.com/redis/go-redis/v9 v9.22.0
-	github.com/soulteary/secure-kit v1.4.0
+	github.com/soulteary/secure-kit v1.5.0
 	github.com/stretchr/testify v1.11.1
 	modernc.org/sqlite v1.44.3
 )
