@@ -190,26 +190,48 @@ func (w *Writer) Enqueue(record *Record) bool {
 		return false
 	}
 
-	// Held for the whole send. Stop takes the same lock for writing, so it
-	// cannot begin shutdown while a send is in flight.
+	sent, overflowed, cb := w.trySend(record)
+	if sent {
+		return true
+	}
+	if !overflowed {
+		// Writer already stopped; not a dropped record to report.
+		return false
+	}
+
+	// Deliberately outside the lifecycle lock -- see trySend.
+	if cb != nil {
+		cb(record)
+	} else {
+		log.Printf("[audit] Audit log queue is full, dropping record: event_type=%s, user_id=%s",
+			record.EventType, record.UserID)
+	}
+	return false
+}
+
+// trySend performs the non-blocking send under the lifecycle read lock and
+// reports the overflow callback rather than calling it.
+//
+// The lock is held for the whole send: Stop takes it for writing, so shutdown
+// cannot begin while a send is in flight. It is deliberately NOT held across
+// the overflow callback, which is caller code. A callback that calls Stop
+// would deadlock trying to upgrade this read lock, and even a merely slow
+// fallback-storage callback would keep Stop from acquiring its write lock --
+// StopTimeout never starts, and shutdown hangs for as long as the callback
+// runs.
+func (w *Writer) trySend(record *Record) (sent, overflowed bool, cb func(*Record)) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
 	if w.stopped {
-		return false
+		return false, false, nil
 	}
 
 	select {
 	case w.queue <- record:
-		return true
+		return true, false, nil
 	default:
-		if cb := w.enqueueFailedCallback(); cb != nil {
-			cb(record)
-		} else {
-			log.Printf("[audit] Audit log queue is full, dropping record: event_type=%s, user_id=%s",
-				record.EventType, record.UserID)
-		}
-		return false
+		return false, true, w.enqueueFailedCallback()
 	}
 }
 

@@ -154,3 +154,56 @@ func TestCallbacksAreRaceFree(t *testing.T) {
 		t.Fatalf("Stop() error = %v", err)
 	}
 }
+
+// --- Codex review follow-up (PR #4) ---
+
+// TestOverflowCallbackDoesNotHoldLifecycleLock is the regression test for
+// Enqueue invoking the queue-full callback while still holding w.mu.RLock. A
+// callback that calls Stop deadlocked trying to upgrade that read lock; a
+// merely slow one kept Stop from acquiring its write lock, so StopTimeout
+// never started and shutdown hung for as long as the callback ran.
+func TestOverflowCallbackDoesNotHoldLifecycleLock(t *testing.T) {
+	// One worker, sleeping on every write, so the queue fills and overflows.
+	w := NewWriter(&recordingStorage{writeDelay: 50 * time.Millisecond}, &WriterConfig{
+		QueueSize:   1,
+		Workers:     1,
+		StopTimeout: 2 * time.Second,
+	})
+
+	blocked := make(chan struct{})
+	stopped := make(chan error, 1)
+
+	var once sync.Once
+	w.OnEnqueueFailed(func(*Record) {
+		// Stop from inside the callback: the exact re-entry that deadlocked.
+		once.Do(func() {
+			close(blocked)
+			stopped <- w.Stop()
+		})
+	})
+
+	w.Start()
+
+	// Fill the queue and keep pushing until one record overflows.
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case <-blocked:
+		case <-deadline:
+			t.Fatal("no record ever overflowed the queue")
+		default:
+			w.Enqueue(&Record{EventType: "t", UserID: "u"})
+			continue
+		}
+		break
+	}
+
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Errorf("Stop from inside the overflow callback error = %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop called from the overflow callback deadlocked on the lifecycle lock")
+	}
+}
