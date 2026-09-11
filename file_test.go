@@ -267,6 +267,14 @@ func TestFileStorage_Query_NonExistentFile(t *testing.T) {
 
 // TestFileStorage_Query_OpenFailsNonNotExist covers Query when Open fails with an error other than IsNotExist.
 func TestFileStorage_Query_OpenFailsNonNotExist(t *testing.T) {
+	// The unreadable-file setup below relies on permission bits being
+	// enforced, which they are not for uid 0. Running the suite in a root
+	// container (the default for many CI images) otherwise fails here, and
+	// then panics on the nil error at the assertion.
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits are not enforced for root; this case cannot be simulated")
+	}
+
 	tempDir := t.TempDir()
 	noPermFile := filepath.Join(tempDir, "noperm.log")
 	require.NoError(t, os.WriteFile(noPermFile, []byte{}, 0000))
@@ -283,7 +291,7 @@ func TestFileStorage_Query_OpenFailsNonNotExist(t *testing.T) {
 	defer func() { _ = f.Close() }()
 
 	_, err = storage.Query(context.Background(), DefaultQueryFilter())
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to open file for reading")
 }
 
@@ -321,6 +329,12 @@ func TestFileStorage_Rotate_FlushFails(t *testing.T) {
 }
 
 func TestFileStorage_Rotate_RenameFails(t *testing.T) {
+	// See TestFileStorage_Query_OpenFailsNonNotExist: a read-only directory
+	// does not stop uid 0 from renaming inside it.
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits are not enforced for root; this case cannot be simulated")
+	}
+
 	tempDir := t.TempDir()
 	subDir := filepath.Join(tempDir, "sub")
 	require.NoError(t, os.MkdirAll(subDir, 0755))
@@ -754,6 +768,11 @@ func TestFileStorage_Query_FileDeletedAfterCreate(t *testing.T) {
 }
 
 func TestFileStorage_Query_OpenFileFails(t *testing.T) {
+	// See TestFileStorage_Query_OpenFailsNonNotExist.
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits are not enforced for root; this case cannot be simulated")
+	}
+
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "audit.log")
 

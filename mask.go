@@ -1,6 +1,8 @@
 package audit
 
 import (
+	"net"
+
 	secure "github.com/soulteary/secure-kit"
 )
 
@@ -31,10 +33,24 @@ func MaskPhone(phone string) string {
 	return secure.MaskPhone(phone)
 }
 
-// MaskIP masks an IP address (keeps first and last octet)
+// MaskIP masks an IP address, keeping the first and last IPv4 octet
+// (192.168.1.5 -> 192.***.5).
+//
+// Note this is pseudonymisation, not anonymisation: with the first and last
+// octet retained an address is narrowed to 1 of 65536, and often far fewer in
+// practice. Use MaskString if a stronger reduction is required.
 func MaskIP(ip string) string {
 	if ip == "" {
 		return ""
+	}
+
+	// An IPv4-mapped IPv6 address contains dots, so the IPv4 branch below would
+	// otherwise turn "::ffff:192.168.1.1" into "::ffff:192.***.1" and leak more
+	// than intended. Normalise it to its IPv4 form first.
+	if parsed := net.ParseIP(ip); parsed != nil {
+		if v4 := parsed.To4(); v4 != nil {
+			ip = v4.String()
+		}
 	}
 
 	// Handle IPv4
@@ -65,10 +81,16 @@ func MaskIP(ip string) string {
 	return "****"
 }
 
-// MaskString masks a string, keeping first and last n characters
+// MaskString masks a string, keeping first and last n characters.
+// A negative keepChars is treated as 0.
 func MaskString(s string, keepChars int) string {
 	if s == "" {
 		return ""
+	}
+	// Guard the slice expressions below: a negative keepChars used to panic
+	// with a slice bounds error.
+	if keepChars < 0 {
+		keepChars = 0
 	}
 
 	runes := []rune(s)
