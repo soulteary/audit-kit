@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 	_ "github.com/lib/pq"              // PostgreSQL driver
@@ -25,7 +24,13 @@ func validateTableName(name string) error {
 		return fmt.Errorf("table name too long: max %d characters", maxTableNameLen)
 	}
 	for _, r := range name {
-		if !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_' {
+		// ASCII only, matching the documented [a-zA-Z0-9_]. unicode.IsLetter
+		// and unicode.IsNumber accept Cyrillic letters, full-width digits and
+		// much else, which is not an injection risk here but does produce
+		// identifiers that several engines require quoting for.
+		isASCIILetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		isASCIIDigit := r >= '0' && r <= '9'
+		if !isASCIILetter && !isASCIIDigit && r != '_' {
 			return fmt.Errorf("invalid table name: only alphanumeric and underscore allowed")
 		}
 	}
