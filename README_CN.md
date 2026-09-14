@@ -375,6 +375,13 @@ config := &audit.Config{
 
 结果取值为 `audit.ResultSuccess`、`audit.ResultFailure` 和 `audit.ResultPending`。
 
+## 升级说明（v1.9.0）
+
+仅升级依赖。没有删除任何 API，调用方无需改代码。
+
+- 测试用 Redis 为 `miniredis` v2.39.0（此前 v2.36.1）。
+- SQLite 驱动为 `modernc.org/sqlite` v1.58.0（此前 v1.44.3）。
+
 ## 升级说明（v1.8.0）
 
 本次修复了异步写入器的两个生命周期缺陷。没有删除任何 API，调用方无需改写代码，

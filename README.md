@@ -386,6 +386,13 @@ config := &audit.Config{
 Results are `audit.ResultSuccess`, `audit.ResultFailure` and
 `audit.ResultPending`.
 
+## Upgrade Notes (v1.9.0)
+
+Dependency refresh only. No API was removed and no call needs rewriting.
+
+- Test Redis is `miniredis` v2.39.0 (was v2.36.1).
+- The SQLite driver is `modernc.org/sqlite` v1.58.0 (was v1.44.3).
+
 ## Upgrade Notes (v1.8.0)
 
 This release fixes two lifecycle defects in the async writer. No API was
