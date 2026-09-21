@@ -123,3 +123,50 @@ func (f *QueryFilter) Normalize() {
 		f.Offset = 0
 	}
 }
+
+// Matches reports whether a record satisfies every criterion the filter sets.
+// An empty or zero field is not a criterion, so the zero filter matches every
+// record.
+//
+// Backends that cannot push the whole filter down to their query language use
+// it to finish the job in memory: [FileStorage] applies it line by line, and
+// the redisstore subpackage applies it to each record it loads. It is exported
+// so that a Storage implemented outside this package filters identically to
+// the built-in ones instead of reimplementing the comparisons.
+func (f *QueryFilter) Matches(record *Record) bool {
+	if record == nil {
+		return false
+	}
+	if f == nil {
+		// No filter is no criteria, so everything matches.
+		return true
+	}
+	if f.EventType != "" && string(record.EventType) != f.EventType {
+		return false
+	}
+	if f.UserID != "" && record.UserID != f.UserID {
+		return false
+	}
+	if f.ChallengeID != "" && record.ChallengeID != f.ChallengeID {
+		return false
+	}
+	if f.SessionID != "" && record.SessionID != f.SessionID {
+		return false
+	}
+	if f.Channel != "" && record.Channel != f.Channel {
+		return false
+	}
+	if f.Result != "" && string(record.Result) != f.Result {
+		return false
+	}
+	if f.IP != "" && record.IP != f.IP {
+		return false
+	}
+	if f.StartTime > 0 && record.Timestamp < f.StartTime {
+		return false
+	}
+	if f.EndTime > 0 && record.Timestamp > f.EndTime {
+		return false
+	}
+	return true
+}

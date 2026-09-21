@@ -1,6 +1,6 @@
 # audit-kit
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/audit-kit.svg)](https://pkg.go.dev/github.com/soulteary/audit-kit)
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/audit-kit/v2.svg)](https://pkg.go.dev/github.com/soulteary/audit-kit/v2)
 [![Go Report Card](.github/goreportcard.svg)](.github/goreportcard-report.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/audit-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/audit-kit)
@@ -12,10 +12,15 @@ interface over several backends (file, database, Redis), an async writer with a
 worker pool and a bounded queue, a fluent record builder, and masking for
 sensitive fields.
 
+The root package links no database driver and no Redis client: the SQL backend
+is built on `database/sql` alone, and Redis lives in the `redisstore`
+subpackage. A service that writes its audit log to a file links neither.
+
 ## Features
 
 - **Storage interface**: one interface (`Write`/`Query`/`Close`) for every backend
 - **Multiple backends**: file (JSON Lines), database (PostgreSQL/MySQL/SQLite), Redis, no-op
+- **Pay for what you import**: drivers are yours to register, Redis is a subpackage
 - **Async writing**: worker pool with a bounded queue, so logging never blocks a request
 - **Durable shutdown**: `Stop()` drains the queue and writes it before the context is cancelled
 - **Multi-storage**: fan one record out to several backends at once
@@ -27,15 +32,23 @@ sensitive fields.
 ## Requirements
 
 - **Go 1.27+** (`go.mod` declares `go 1.27.0`)
-- Optional: `github.com/redis/go-redis/v9` for Redis storage
-- Optional: `github.com/go-sql-driver/mysql`, `github.com/lib/pq` or
-  `modernc.org/sqlite` for database storage
+- For database storage: a `database/sql` driver **your program registers** —
+  `github.com/lib/pq`, `github.com/go-sql-driver/mysql`, `modernc.org/sqlite`
+  or any other driver speaking one of those dialects
+- For Redis storage: `github.com/redis/go-redis/v9`, imported through the
+  `github.com/soulteary/audit-kit/v2/redisstore` subpackage
+
+Neither is a dependency of the root package. Import nothing extra and you link
+nothing extra.
 
 ## Installation
 
 ```bash
-go get github.com/soulteary/audit-kit
+go get github.com/soulteary/audit-kit/v2
 ```
+
+Upgrading from v1? See [Upgrade Notes (v2.0.0)](#upgrade-notes-v200) — the
+import path changes, and so do the Redis and database entry points.
 
 ## Quick Start
 
@@ -46,7 +59,7 @@ import (
     "context"
     "log"
 
-    audit "github.com/soulteary/audit-kit"
+    audit "github.com/soulteary/audit-kit/v2"
 )
 
 func main() {
@@ -133,14 +146,26 @@ and simply drops the record.
 
 ### Database storage
 
+This package registers no driver. Your program does, the usual `database/sql`
+way:
+
 ```go
+import (
+    _ "github.com/lib/pq"            // or go-sql-driver/mysql, modernc.org/sqlite
+
+    audit "github.com/soulteary/audit-kit/v2"
+)
+
 // PostgreSQL
 storage, err := audit.NewDatabaseStorage("postgres://user:pass@localhost/db")
 
 // MySQL
 storage, err := audit.NewDatabaseStorage("mysql://user:pass@tcp(localhost:3306)/db")
 
-// An existing *sql.DB (handy for tests)
+// SQLite
+storage, err := audit.NewDatabaseStorage("sqlite:///var/lib/app/audit.db")
+
+// An existing *sql.DB — preferred when the service already has a pool
 db, _ := sql.Open("sqlite", ":memory:")
 storage, err := audit.NewDatabaseStorageFromDB(db, "sqlite", nil)
 
@@ -148,16 +173,39 @@ storage, err := audit.NewDatabaseStorageFromDB(db, "sqlite", nil)
 storage, err := audit.NewDatabaseStorageWithConfig(dsn, &audit.DatabaseConfig{
     TableName: "audit_records",
 })
+
+// A driver that is not named after its dialect: pgx, sqlite3, an instrumented
+// wrapper. The dialect still comes from the URL scheme.
+storage, err := audit.NewDatabaseStorageWithConfig("postgres://…", &audit.DatabaseConfig{
+    DriverName: "pgx",
+})
+```
+
+If the driver is not registered, the constructor fails before dialling and the
+error names the import to add:
+
+```
+database/sql driver "postgres" is not registered: this package imports no
+driver, so the program must do it, for example with a blank import of the
+driver package (import _ "github.com/lib/pq"); registered drivers: []
 ```
 
 ### Redis storage
 
+Redis lives in the `redisstore` subpackage, so go-redis reaches your binary
+only if you import it:
+
 ```go
-import "github.com/redis/go-redis/v9"
+import (
+    "github.com/redis/go-redis/v9"
+
+    "github.com/soulteary/audit-kit/v2/redisstore"
+)
 
 client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+defer client.Close() // the store does not close a client it was handed
 
-storage := audit.NewRedisStorageWithConfig(client, &audit.RedisConfig{
+storage := redisstore.NewWithConfig(client, &redisstore.Config{
     KeyPrefix: "myapp:audit:",
     TTL:       7 * 24 * time.Hour,
 })
@@ -166,11 +214,15 @@ storage := audit.NewRedisStorageWithConfig(client, &audit.RedisConfig{
 removed, err := storage.Cleanup(ctx)
 ```
 
+`redisstore.New` takes a `redisstore.Client`, which is the handful of commands
+the store uses — so `*redis.Client`, `*redis.ClusterClient`, `*redis.Ring`,
+`redis.UniversalClient` and any instrumented wrapper all work unchanged.
+
 ### Multi-storage
 
 ```go
 fileStorage, _ := audit.NewFileStorage("/var/log/audit.log")
-redisStorage := audit.NewRedisStorage(redisClient)
+redisStorage := redisstore.New(redisClient)
 
 multi := audit.NewMultiStorage(fileStorage, redisStorage)
 logger := audit.NewLogger(multi, nil)
@@ -179,16 +231,22 @@ logger := audit.NewLogger(multi, nil)
 ### Building storage from configuration
 
 ```go
+opts := &audit.StorageOptions{
+    FilePath:    "/var/log/audit.log",
+    DatabaseURL: os.Getenv("DATABASE_URL"),
+    TableName:   "audit_records",
+}
+
+// Redis is built by the caller, so the root package stays free of go-redis.
+// Skip this block and "redis" simply reports what is missing.
+opts.RedisStorage = redisstore.NewWithConfig(redisClient, &redisstore.Config{
+    KeyPrefix: "myapp:audit:",
+    TTL:       7 * 24 * time.Hour,
+})
+
 storage, err := audit.NewStorageFromType(
     audit.ParseStorageType(os.Getenv("AUDIT_STORAGE")), // "file" | "database" | "redis" | "none"
-    &audit.StorageOptions{
-        FilePath:    "/var/log/audit.log",
-        DatabaseURL: os.Getenv("DATABASE_URL"),
-        RedisClient: redisClient,
-        RedisPrefix: "myapp:audit:",
-        RedisTTL:    7 * 24 * time.Hour,
-        TableName:   "audit_records",
-    },
+    opts,
 )
 ```
 
@@ -288,7 +346,6 @@ logger.SetLogCallback(func(record *audit.Record) {
 config := &audit.Config{
     Enabled:         true,               // false disables logging entirely
     MaskDestination: true,               // mask phone/email in Destination
-    TTL:             7 * 24 * time.Hour, // Redis storage TTL
     Writer: &audit.WriterConfig{
         QueueSize:   1000,               // bounded async queue
         Workers:     2,                  // worker goroutines
@@ -303,7 +360,6 @@ config := &audit.Config{
 |--------|---------|-------|
 | `Enabled` | `true` | `false` makes `Log` a no-op |
 | `MaskDestination` | `true` | masks `Record.Destination` by channel |
-| `TTL` | `168h` (7 days) | Redis only |
 | `Writer.QueueSize` | `1000` | a non-positive value falls back to the default |
 | `Writer.Workers` | `2` | a non-positive value falls back to the default |
 | `Writer.StopTimeout` | `10s` | a non-positive value falls back to the default |
@@ -339,12 +395,13 @@ config := &audit.Config{
 | Function | Description |
 |----------|-------------|
 | `NewFileStorage(path)` | JSON Lines file; `Rotate()` rotates it |
-| `NewDatabaseStorage(url)` | PostgreSQL / MySQL from a DSN |
+| `NewDatabaseStorage(url)` | PostgreSQL / MySQL / SQLite from a URL; you register the driver |
 | `NewDatabaseStorageFromDB(db, dbType, cfg)` | Wrap an existing `*sql.DB` |
-| `NewRedisStorage(client)` | Redis; `Cleanup(ctx)` prunes the index |
+| `redisstore.New(client)` | Redis; `Cleanup(ctx)` prunes the index |
 | `NewMultiStorage(storages…)` | Fan-out to several backends |
 | `NewNoopStorage()` | Discard everything |
 | `NewStorageFromType(type, opts)` | Build from configuration |
+| `(*QueryFilter).Matches(record)` | The in-memory filter rule, for custom backends |
 
 ### Masking
 
@@ -385,6 +442,81 @@ config := &audit.Config{
 
 Results are `audit.ResultSuccess`, `audit.ResultFailure` and
 `audit.ResultPending`.
+
+## Upgrade Notes (v2.0.0)
+
+Every breaking change batched into one major version, so the import path is
+rewritten once rather than once per release. Full detail, and the measurements
+below, are in [CHANGELOG.md](CHANGELOG.md).
+
+**1. The import path is now `github.com/soulteary/audit-kit/v2`.**
+
+```bash
+go get github.com/soulteary/audit-kit/v2
+go mod tidy
+```
+
+```go
+audit "github.com/soulteary/audit-kit/v2"
+```
+
+**2. Register your own database driver.** The root package blank-imported
+`go-sql-driver/mysql` and `lib/pq`, so a service writing audit logs to a file
+linked both. Add the blank import your program actually needs:
+
+```go
+import (
+    _ "github.com/lib/pq"            // or go-sql-driver/mysql, modernc.org/sqlite
+
+    audit "github.com/soulteary/audit-kit/v2"
+)
+```
+
+`NewDatabaseStorage`, `NewDatabaseStorageWithConfig` and
+`NewDatabaseStorageFromDB` keep their signatures. Without a registered driver
+the URL constructors now fail before dialling, naming the import to add.
+
+**3. Redis moved to the `redisstore` subpackage.**
+
+| v1 | v2 |
+|----|----|
+| `audit.NewRedisStorage(client)` | `redisstore.New(client)` |
+| `audit.NewRedisStorageWithConfig(client, cfg)` | `redisstore.NewWithConfig(client, cfg)` |
+| `audit.RedisStorage` | `redisstore.Storage` |
+| `audit.RedisConfig` / `audit.DefaultRedisConfig()` | `redisstore.Config` / `redisstore.DefaultConfig()` |
+| `StorageOptions.RedisClient` / `RedisPrefix` / `RedisTTL` | `StorageOptions.RedisStorage`, built with `redisstore` |
+
+No compatibility shims: a shim has to import go-redis, which relinks it and
+gives back the entire benefit.
+
+**Also note:** `redisstore.Storage.Close()` no longer closes the Redis client
+it was handed — `MultiStorage.Close` and `Logger.Stop` both call it, so v1 took
+the rest of the program's Redis down with the audit logger. Close the client
+where you created it, or set `redisstore.Config.CloseClient` for v1 behaviour.
+
+**Also gone: `Config.TTL`.** It claimed to be the Redis TTL, was read by
+nothing, and the real TTL always came from the Redis config — now
+`redisstore.Config.TTL`.
+
+**Fixed on the way:** `postgres://` URLs were rejected outright by
+`NewDatabaseStorage` — a 10-byte slice compared against an 11-byte literal, so
+no PostgreSQL URL ever matched. The only working PostgreSQL path was
+`NewDatabaseStorageFromDB`.
+
+**Added:** `DatabaseConfig.DriverName` (for `pgx`, `sqlite3`, instrumented
+wrappers), `sqlite://` and `postgresql://` URL schemes, `QueryFilter.Matches`,
+`redisstore.DefaultKeyPrefix` / `DefaultTTL`, and a `redisstore.Client`
+interface that accepts cluster, ring and universal clients.
+
+**What it buys**, for a program importing only the root package, against
+v1.10.0:
+
+| | v1.10.0 | v2.0.0 |
+|---|---|---|
+| Binary size | 6,080,647 B | 4,703,739 B (−22.6%) |
+| Linked packages | 225 | 142 |
+| Non-stdlib packages linked | 46 | 9 |
+| Modules in your `go.sum` | 27 | 15 |
 
 ## Upgrade Notes (v1.10.0)
 
@@ -452,7 +584,9 @@ removed, and no call needs rewriting — but the observable behaviour changes.
   `OnEnqueueFailed` and size `QueueSize` for your peak, or use the synchronous
   logger where no record may ever be lost.
 - **Redis**: set `EventID` or `ChallengeID` so keys stay unique, and run
-  `Cleanup()` periodically — the index key itself carries no TTL.
+  `Cleanup()` periodically — the index key itself carries no TTL. Closing the
+  store no longer closes the client; close it where you created it, or set
+  `redisstore.Config.CloseClient`.
 - **Metadata**: after a JSON round-trip, numbers are `float64`. Type-assert
   accordingly.
 
@@ -460,15 +594,17 @@ removed, and no call needs rewriting — but the observable behaviour changes.
 
 ```
 audit-kit/
+├── doc.go       # Package documentation and layout
 ├── types.go     # Record, event/result constants, record options
-├── storage.go   # Storage interface and QueryFilter
+├── storage.go   # Storage interface, QueryFilter and its Matches rule
 ├── logger.go    # Logger, Config, DefaultConfig
 ├── writer.go    # Async writer, worker pool, lifecycle
 ├── file.go      # File storage (JSON Lines)
-├── database.go  # Database storage (PostgreSQL/MySQL/SQLite)
-├── redis.go     # Redis storage
+├── database.go  # Database storage (PostgreSQL/MySQL/SQLite), no driver imported
 ├── factory.go   # Storage factory and multi-storage
-└── mask.go      # Masking helpers
+├── mask.go      # Masking helpers
+├── redisstore/  # Redis storage — the only package importing go-redis
+└── integrationtest/ # Tests against a real PostgreSQL / MySQL, build-tagged
 ```
 
 ## Testing
@@ -480,6 +616,10 @@ go test ./...
 go test ./... -coverprofile=coverage.out -covermode=atomic
 go tool cover -func=coverage.out
 go tool cover -html=coverage.out -o coverage.html
+
+# Against a real database (skips unless the URL is set)
+TEST_POSTGRES_URL=postgres://… go test -tags=integration ./integrationtest/...
+TEST_MYSQL_URL=user:pass@tcp(localhost:3306)/db go test -tags=integration ./integrationtest/...
 ```
 
 A few tests simulate I/O failures with `chmod`, which uid 0 ignores; those skip

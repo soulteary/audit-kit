@@ -97,3 +97,57 @@ func TestQueryFilter_Normalize(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryFilter_Matches_Nil(t *testing.T) {
+	record := NewRecord(EventLoginSuccess, ResultSuccess).WithUserID("u1")
+
+	var nilFilter *QueryFilter
+	// No filter is no criteria: everything matches.
+	assert.True(t, nilFilter.Matches(record))
+
+	// A nil record satisfies nothing, including the empty filter.
+	assert.False(t, DefaultQueryFilter().Matches(nil))
+	assert.False(t, nilFilter.Matches(nil))
+}
+
+func TestQueryFilter_Matches(t *testing.T) {
+	record := NewRecord(EventLoginSuccess, ResultSuccess).
+		WithUserID("u1").
+		WithChallengeID("ch1").
+		WithSessionID("s1").
+		WithChannel("email").
+		WithIP("10.0.0.1").
+		SetTimestamp(1000)
+
+	tests := []struct {
+		name  string
+		f     *QueryFilter
+		match bool
+	}{
+		{"empty filter", &QueryFilter{}, true},
+		{"event type", DefaultQueryFilter().WithEventType(string(EventLoginSuccess)), true},
+		{"other event type", DefaultQueryFilter().WithEventType(string(EventLogout)), false},
+		{"user", DefaultQueryFilter().WithUserID("u1"), true},
+		{"other user", DefaultQueryFilter().WithUserID("u2"), false},
+		{"challenge", DefaultQueryFilter().WithChallengeID("ch1"), true},
+		{"other challenge", DefaultQueryFilter().WithChallengeID("ch2"), false},
+		{"session", DefaultQueryFilter().WithSessionID("s1"), true},
+		{"other session", DefaultQueryFilter().WithSessionID("s2"), false},
+		{"channel", DefaultQueryFilter().WithChannel("email"), true},
+		{"other channel", DefaultQueryFilter().WithChannel("sms"), false},
+		{"result", DefaultQueryFilter().WithResult(string(ResultSuccess)), true},
+		{"other result", DefaultQueryFilter().WithResult(string(ResultFailure)), false},
+		{"ip", DefaultQueryFilter().WithIP("10.0.0.1"), true},
+		{"other ip", DefaultQueryFilter().WithIP("10.0.0.2"), false},
+		{"time range around", DefaultQueryFilter().WithTimeRange(900, 1100), true},
+		{"time range before", DefaultQueryFilter().WithTimeRange(0, 900), false},
+		{"time range after", DefaultQueryFilter().WithTimeRange(1100, 0), false},
+		{"boundaries are inclusive", DefaultQueryFilter().WithTimeRange(1000, 1000), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.match, tt.f.Matches(record))
+		})
+	}
+}

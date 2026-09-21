@@ -1,4 +1,4 @@
-package audit
+package redisstore
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	audit "github.com/soulteary/audit-kit/v2"
 )
 
 func newTestRedisClient(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
@@ -22,43 +24,43 @@ func newTestRedisClient(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 	return client, mr
 }
 
-func TestNewRedisStorage(t *testing.T) {
+func TestNew(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 	require.NotNil(t, storage)
 
 	assert.Equal(t, "audit:", storage.KeyPrefix())
 	assert.Equal(t, 7*24*time.Hour, storage.TTL())
 }
 
-func TestNewRedisStorageWithConfig(t *testing.T) {
+func TestNewWithConfig(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	config := &RedisConfig{
+	config := &Config{
 		KeyPrefix: "myapp:audit:",
 		TTL:       24 * time.Hour,
 	}
 
-	storage := NewRedisStorageWithConfig(client, config)
+	storage := NewWithConfig(client, config)
 	require.NotNil(t, storage)
 
 	assert.Equal(t, "myapp:audit:", storage.KeyPrefix())
 	assert.Equal(t, 24*time.Hour, storage.TTL())
 }
 
-func TestRedisStorage_Write(t *testing.T) {
+func TestStorage_Write(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
-	record := NewRecord(EventLoginSuccess, ResultSuccess).
+	record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 		WithUserID("user123").
 		WithIP("192.168.1.1")
 
@@ -70,40 +72,40 @@ func TestRedisStorage_Write(t *testing.T) {
 	assert.Len(t, keys, 2) // record key + index
 }
 
-func TestRedisStorage_Write_SameSecondNoID(t *testing.T) {
+func TestStorage_Write_SameSecondNoID(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 	now := time.Now().Unix()
 
 	// Two records in same second with no EventID/ChallengeID/UserID must get distinct keys
-	r1 := NewRecord(EventLoginSuccess, ResultSuccess).SetTimestamp(now)
-	r2 := NewRecord(EventLoginFailed, ResultFailure).SetTimestamp(now)
+	r1 := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).SetTimestamp(now)
+	r2 := audit.NewRecord(audit.EventLoginFailed, audit.ResultFailure).SetTimestamp(now)
 
 	err := storage.Write(context.Background(), r1)
 	require.NoError(t, err)
 	err = storage.Write(context.Background(), r2)
 	require.NoError(t, err)
 
-	results, err := storage.Query(context.Background(), DefaultQueryFilter().WithLimit(10))
+	results, err := storage.Query(context.Background(), audit.DefaultQueryFilter().WithLimit(10))
 	require.NoError(t, err)
 	assert.Len(t, results, 2, "both records must be stored with unique keys")
 }
 
-func TestRedisStorage_Query(t *testing.T) {
+func TestStorage_Query(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write multiple records
 	for i := 0; i < 5; i++ {
-		record := NewRecord(EventLoginSuccess, ResultSuccess).
+		record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 			WithUserID("user" + string(rune('0'+i))).
 			SetTimestamp(now + int64(i))
 		err := storage.Write(context.Background(), record)
@@ -111,7 +113,7 @@ func TestRedisStorage_Query(t *testing.T) {
 	}
 
 	// Query all
-	results, err := storage.Query(context.Background(), DefaultQueryFilter())
+	results, err := storage.Query(context.Background(), audit.DefaultQueryFilter())
 	require.NoError(t, err)
 	assert.Len(t, results, 5)
 
@@ -121,20 +123,20 @@ func TestRedisStorage_Query(t *testing.T) {
 	}
 }
 
-func TestRedisStorage_Query_WithFilter(t *testing.T) {
+func TestStorage_Query_WithFilter(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write records with different attributes
-	records := []*Record{
-		NewRecord(EventLoginSuccess, ResultSuccess).WithUserID("user1").SetTimestamp(now),
-		NewRecord(EventLoginFailed, ResultFailure).WithUserID("user2").SetTimestamp(now + 1),
-		NewRecord(EventLoginSuccess, ResultSuccess).WithUserID("user3").SetTimestamp(now + 2),
+	records := []*audit.Record{
+		audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).WithUserID("user1").SetTimestamp(now),
+		audit.NewRecord(audit.EventLoginFailed, audit.ResultFailure).WithUserID("user2").SetTimestamp(now + 1),
+		audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).WithUserID("user3").SetTimestamp(now + 2),
 	}
 
 	for _, r := range records {
@@ -143,99 +145,99 @@ func TestRedisStorage_Query_WithFilter(t *testing.T) {
 	}
 
 	// Filter by event type
-	filter := DefaultQueryFilter().WithEventType("login_success")
+	filter := audit.DefaultQueryFilter().WithEventType("login_success")
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 2)
 
 	// Filter by user ID
-	filter = DefaultQueryFilter().WithUserID("user1")
+	filter = audit.DefaultQueryFilter().WithUserID("user1")
 	results, err = storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 
 	// Filter by result
-	filter = DefaultQueryFilter().WithResult("failure")
+	filter = audit.DefaultQueryFilter().WithResult("failure")
 	results, err = storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 }
 
-func TestRedisStorage_Query_TimeRange(t *testing.T) {
+func TestStorage_Query_TimeRange(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write records with different timestamps
 	for i := 0; i < 5; i++ {
-		record := NewRecord(EventLoginSuccess, ResultSuccess).
+		record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 			SetTimestamp(now + int64(i*100))
 		err := storage.Write(context.Background(), record)
 		require.NoError(t, err)
 	}
 
 	// Filter by time range
-	filter := DefaultQueryFilter().WithTimeRange(now+100, now+300)
+	filter := audit.DefaultQueryFilter().WithTimeRange(now+100, now+300)
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 3) // timestamps: now+100, now+200, now+300
 }
 
-func TestRedisStorage_Query_Pagination(t *testing.T) {
+func TestStorage_Query_Pagination(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write 10 records
 	for i := 0; i < 10; i++ {
-		record := NewRecord(EventLoginSuccess, ResultSuccess).
+		record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 			SetTimestamp(now + int64(i))
 		err := storage.Write(context.Background(), record)
 		require.NoError(t, err)
 	}
 
 	// Get first page
-	filter := DefaultQueryFilter().WithLimit(3).WithOffset(0)
+	filter := audit.DefaultQueryFilter().WithLimit(3).WithOffset(0)
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 3)
 
 	// Get second page
-	filter = DefaultQueryFilter().WithLimit(3).WithOffset(3)
+	filter = audit.DefaultQueryFilter().WithLimit(3).WithOffset(3)
 	results, err = storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 3)
 }
 
-func TestRedisStorage_Query_Empty(t *testing.T) {
+func TestStorage_Query_Empty(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
-	results, err := storage.Query(context.Background(), DefaultQueryFilter())
+	results, err := storage.Query(context.Background(), audit.DefaultQueryFilter())
 	require.NoError(t, err)
 	assert.Len(t, results, 0)
 }
 
-func TestRedisStorage_Cleanup(t *testing.T) {
+func TestStorage_Cleanup(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	// Write a record
-	record := NewRecord(EventLoginSuccess, ResultSuccess)
+	record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess)
 	err := storage.Write(context.Background(), record)
 	require.NoError(t, err)
 
@@ -246,12 +248,12 @@ func TestRedisStorage_Cleanup(t *testing.T) {
 }
 
 // TestRedisStorage_Cleanup_RemovesStale verifies that Cleanup removes index entries whose keys expired.
-func TestRedisStorage_Cleanup_RemovesStale(t *testing.T) {
+func TestStorage_Cleanup_RemovesStale(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 	setKey := storage.KeyPrefix() + "index"
 
 	// Add a stale member to the index (no corresponding record key)
@@ -263,51 +265,51 @@ func TestRedisStorage_Cleanup_RemovesStale(t *testing.T) {
 	assert.Equal(t, int64(1), removed)
 }
 
-func TestRedisStorage_Write_SetFails(t *testing.T) {
+func TestStorage_Write_SetFails(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	require.NoError(t, client.Close())
 
-	storage := NewRedisStorage(client)
-	record := NewRecord(EventLoginSuccess, ResultSuccess)
+	storage := New(client)
+	record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess)
 	err := storage.Write(context.Background(), record)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to set key")
 }
 
-func TestRedisStorage_Write_ZAddFails(t *testing.T) {
+func TestStorage_Write_ZAddFails(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 	setKey := storage.KeyPrefix() + "index"
 	// Make index key a string so ZAdd fails (wrong type)
 	require.NoError(t, client.Set(context.Background(), setKey, "not-a-sorted-set", 0).Err())
 
-	record := NewRecord(EventLoginSuccess, ResultSuccess).WithUserID("u1")
+	record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).WithUserID("u1")
 	err := storage.Write(context.Background(), record)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to add to sorted set")
 }
 
-func TestRedisStorage_Query_ZRevRangeFails(t *testing.T) {
+func TestStorage_Query_ZRevRangeFails(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	require.NoError(t, client.Close())
 
-	storage := NewRedisStorage(client)
-	_, err := storage.Query(context.Background(), DefaultQueryFilter())
+	storage := New(client)
+	_, err := storage.Query(context.Background(), audit.DefaultQueryFilter())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get keys")
 }
 
-func TestRedisStorage_Cleanup_ZRangeFails(t *testing.T) {
+func TestStorage_Cleanup_ZRangeFails(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	require.NoError(t, client.Close())
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 	_, err := storage.Cleanup(context.Background())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get keys")
@@ -315,13 +317,13 @@ func TestRedisStorage_Cleanup_ZRangeFails(t *testing.T) {
 
 // TestRedisStorage_Query_ExpiredKey verifies that when a key in the index has expired (redis.Nil),
 // Query skips it and removes it from the index.
-func TestRedisStorage_Query_ExpiredKey(t *testing.T) {
+func TestStorage_Query_ExpiredKey(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
-	record := NewRecord(EventLoginSuccess, ResultSuccess).WithUserID("u1")
+	storage := New(client)
+	record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).WithUserID("u1")
 	err := storage.Write(context.Background(), record)
 	require.NoError(t, err)
 
@@ -335,34 +337,34 @@ func TestRedisStorage_Query_ExpiredKey(t *testing.T) {
 		}
 	}
 
-	results, err := storage.Query(context.Background(), DefaultQueryFilter())
+	results, err := storage.Query(context.Background(), audit.DefaultQueryFilter())
 	require.NoError(t, err)
 	assert.Len(t, results, 0)
 }
 
 // TestRedisStorage_Query_PaginationOffsetBeyondResults verifies start >= len(records) returns empty.
-func TestRedisStorage_Query_PaginationOffsetBeyondResults(t *testing.T) {
+func TestStorage_Query_PaginationOffsetBeyondResults(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
-	err := storage.Write(context.Background(), NewRecord(EventLoginSuccess, ResultSuccess))
+	storage := New(client)
+	err := storage.Write(context.Background(), audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess))
 	require.NoError(t, err)
 
-	filter := DefaultQueryFilter().WithLimit(10).WithOffset(100)
+	filter := audit.DefaultQueryFilter().WithLimit(10).WithOffset(100)
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 0)
 }
 
 // TestRedisStorage_Query_InvalidJSONInKey skips keys whose value is not valid record JSON.
-func TestRedisStorage_Query_InvalidJSONInKey(t *testing.T) {
+func TestStorage_Query_InvalidJSONInKey(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 	setKey := storage.KeyPrefix() + "index"
 	badKey := storage.KeyPrefix() + "1:bad"
 	// Add index entry and set value to invalid JSON
@@ -371,48 +373,66 @@ func TestRedisStorage_Query_InvalidJSONInKey(t *testing.T) {
 	err = client.Set(context.Background(), badKey, "not valid json", 0).Err()
 	require.NoError(t, err)
 
-	results, err := storage.Query(context.Background(), DefaultQueryFilter())
+	results, err := storage.Query(context.Background(), audit.DefaultQueryFilter())
 	require.NoError(t, err)
 	assert.Len(t, results, 0)
 }
 
-func TestRedisStorage_Close(t *testing.T) {
-	client, mr := newTestRedisClient(t)
-	defer mr.Close()
-
-	storage := NewRedisStorage(client)
-
-	err := storage.Close()
-	assert.NoError(t, err)
-}
-
-func TestRedisStorage_Client(t *testing.T) {
+// Close leaves a shared client alone by default: the program that handed the
+// client over keeps using it after the audit logger has shut down.
+func TestStorage_Close_LeavesSharedClientOpen(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
+
+	require.NoError(t, storage.Close())
+
+	// The client still works, which is the whole point of the default.
+	require.NoError(t, client.Ping(context.Background()).Err())
+}
+
+// CloseClient opts back into v1's behaviour, for a client the store owns.
+func TestStorage_Close_ClosesOwnedClient(t *testing.T) {
+	client, mr := newTestRedisClient(t)
+	defer mr.Close()
+
+	storage := NewWithConfig(client, &Config{CloseClient: true})
+
+	require.NoError(t, storage.Close())
+
+	err := client.Ping(context.Background()).Err()
+	assert.ErrorIs(t, err, redis.ErrClosed)
+}
+
+func TestStorage_Client(t *testing.T) {
+	client, mr := newTestRedisClient(t)
+	defer mr.Close()
+	defer func() { _ = client.Close() }()
+
+	storage := New(client)
 	assert.Equal(t, client, storage.Client())
 }
 
-func TestDefaultRedisConfig(t *testing.T) {
-	config := DefaultRedisConfig()
+func TestDefaultConfig(t *testing.T) {
+	config := DefaultConfig()
 	assert.Equal(t, "audit:", config.KeyPrefix)
 	assert.Equal(t, 7*24*time.Hour, config.TTL)
 }
 
-func TestNewRedisStorageWithConfig_Defaults(t *testing.T) {
+func TestNewWithConfig_Defaults(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
 	// Test with empty prefix and zero TTL
-	config := &RedisConfig{
+	config := &Config{
 		KeyPrefix: "",
 		TTL:       0,
 	}
 
-	storage := NewRedisStorageWithConfig(client, config)
+	storage := NewWithConfig(client, config)
 	require.NotNil(t, storage)
 
 	// Should use defaults
@@ -420,49 +440,49 @@ func TestNewRedisStorageWithConfig_Defaults(t *testing.T) {
 	assert.Equal(t, 7*24*time.Hour, storage.TTL())
 }
 
-func TestRedisStorage_Write_DifferentKeyTypes(t *testing.T) {
+func TestStorage_Write_DifferentKeyTypes(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	// Write with EventID
-	record1 := NewRecord(EventLoginSuccess, ResultSuccess)
+	record1 := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess)
 	record1.EventID = "evt_123"
 	err := storage.Write(context.Background(), record1)
 	require.NoError(t, err)
 
 	// Write with ChallengeID only
-	record2 := NewRecord(EventChallengeCreated, ResultSuccess)
+	record2 := audit.NewRecord(audit.EventChallengeCreated, audit.ResultSuccess)
 	record2.ChallengeID = "ch_456"
 	err = storage.Write(context.Background(), record2)
 	require.NoError(t, err)
 
 	// Write with UserID only
-	record3 := NewRecord(EventLogout, ResultSuccess)
+	record3 := audit.NewRecord(audit.EventLogout, audit.ResultSuccess)
 	record3.UserID = "user789"
 	err = storage.Write(context.Background(), record3)
 	require.NoError(t, err)
 
 	// Write with nothing (just timestamp)
-	record4 := NewRecord(EventCustom, ResultSuccess)
+	record4 := audit.NewRecord(audit.EventCustom, audit.ResultSuccess)
 	err = storage.Write(context.Background(), record4)
 	require.NoError(t, err)
 }
 
-func TestRedisStorage_Query_NoTimeRange(t *testing.T) {
+func TestStorage_Query_NoTimeRange(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write some records with unique identifiers
 	for i := 0; i < 3; i++ {
-		record := NewRecord(EventLoginSuccess, ResultSuccess).
+		record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 			WithUserID("user" + string(rune('0'+i))).
 			SetTimestamp(now + int64(i))
 		err := storage.Write(context.Background(), record)
@@ -470,136 +490,136 @@ func TestRedisStorage_Query_NoTimeRange(t *testing.T) {
 	}
 
 	// Query without time range (should use -inf to +inf)
-	filter := DefaultQueryFilter()
+	filter := audit.DefaultQueryFilter()
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 3)
 }
 
-func TestRedisStorage_Query_OffsetBeyondResults(t *testing.T) {
+func TestStorage_Query_OffsetBeyondResults(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	// Write 3 records
 	for i := 0; i < 3; i++ {
-		record := NewRecord(EventLoginSuccess, ResultSuccess)
+		record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess)
 		err := storage.Write(context.Background(), record)
 		require.NoError(t, err)
 	}
 
 	// Query with offset beyond results
-	filter := DefaultQueryFilter().WithOffset(100)
+	filter := audit.DefaultQueryFilter().WithOffset(100)
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 0)
 }
 
-func TestRedisStorage_CloseNilClient(t *testing.T) {
-	storage := &RedisStorage{client: nil}
+func TestStorage_CloseNilClient(t *testing.T) {
+	storage := &Storage{client: nil}
 	err := storage.Close()
 	assert.NoError(t, err)
 }
 
-func TestRedisStorage_Query_WithSessionFilter(t *testing.T) {
+func TestStorage_Query_WithSessionFilter(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write records with session IDs
-	record1 := NewRecord(EventLoginSuccess, ResultSuccess).
+	record1 := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 		WithSessionID("sess_123").
 		SetTimestamp(now)
 	err := storage.Write(context.Background(), record1)
 	require.NoError(t, err)
 
-	record2 := NewRecord(EventLoginSuccess, ResultSuccess).
+	record2 := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 		WithSessionID("sess_456").
 		SetTimestamp(now + 1)
 	err = storage.Write(context.Background(), record2)
 	require.NoError(t, err)
 
 	// Filter by session ID
-	filter := DefaultQueryFilter().WithSessionID("sess_123")
+	filter := audit.DefaultQueryFilter().WithSessionID("sess_123")
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 }
 
-func TestRedisStorage_Query_WithChannelFilter(t *testing.T) {
+func TestStorage_Query_WithChannelFilter(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write records with channels
-	record1 := NewRecord(EventSendSuccess, ResultSuccess).
+	record1 := audit.NewRecord(audit.EventSendSuccess, audit.ResultSuccess).
 		WithChannel("sms").
 		SetTimestamp(now)
 	err := storage.Write(context.Background(), record1)
 	require.NoError(t, err)
 
-	record2 := NewRecord(EventSendSuccess, ResultSuccess).
+	record2 := audit.NewRecord(audit.EventSendSuccess, audit.ResultSuccess).
 		WithChannel("email").
 		SetTimestamp(now + 1)
 	err = storage.Write(context.Background(), record2)
 	require.NoError(t, err)
 
 	// Filter by channel
-	filter := DefaultQueryFilter().WithChannel("sms")
+	filter := audit.DefaultQueryFilter().WithChannel("sms")
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 }
 
-func TestRedisStorage_Query_WithIPFilter(t *testing.T) {
+func TestStorage_Query_WithIPFilter(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write records with IPs
-	record1 := NewRecord(EventLoginSuccess, ResultSuccess).
+	record1 := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 		WithIP("192.168.1.1").
 		SetTimestamp(now)
 	err := storage.Write(context.Background(), record1)
 	require.NoError(t, err)
 
-	record2 := NewRecord(EventLoginSuccess, ResultSuccess).
+	record2 := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 		WithIP("10.0.0.1").
 		SetTimestamp(now + 1)
 	err = storage.Write(context.Background(), record2)
 	require.NoError(t, err)
 
 	// Filter by IP
-	filter := DefaultQueryFilter().WithIP("192.168.1.1")
+	filter := audit.DefaultQueryFilter().WithIP("192.168.1.1")
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 }
 
-func TestRedisStorage_Cleanup_RemovesExpiredKeys(t *testing.T) {
+func TestStorage_Cleanup_RemovesExpiredKeys(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 	ctx := context.Background()
 
 	// Write a record (creates index entry)
-	record := NewRecord(EventLoginSuccess, ResultSuccess).
+	record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 		WithUserID("user123")
 	err := storage.Write(ctx, record)
 	require.NoError(t, err)
@@ -614,44 +634,44 @@ func TestRedisStorage_Cleanup_RemovesExpiredKeys(t *testing.T) {
 	assert.Equal(t, int64(1), removed)
 }
 
-func TestRedisStorage_Query_ChallengeIDFilter(t *testing.T) {
+func TestStorage_Query_ChallengeIDFilter(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write records with challenge IDs
-	record1 := NewRecord(EventChallengeCreated, ResultSuccess).
+	record1 := audit.NewRecord(audit.EventChallengeCreated, audit.ResultSuccess).
 		WithChallengeID("ch_123").
 		SetTimestamp(now)
 	err := storage.Write(context.Background(), record1)
 	require.NoError(t, err)
 
-	record2 := NewRecord(EventChallengeCreated, ResultSuccess).
+	record2 := audit.NewRecord(audit.EventChallengeCreated, audit.ResultSuccess).
 		WithChallengeID("ch_456").
 		SetTimestamp(now + 1)
 	err = storage.Write(context.Background(), record2)
 	require.NoError(t, err)
 
 	// Filter by challenge ID
-	filter := DefaultQueryFilter().WithChallengeID("ch_123")
+	filter := audit.DefaultQueryFilter().WithChallengeID("ch_123")
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 }
 
-func TestRedisStorage_Query_NilFilter(t *testing.T) {
+func TestStorage_Query_NilFilter(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	// Write a record
-	record := NewRecord(EventLoginSuccess, ResultSuccess)
+	record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess)
 	err := storage.Write(context.Background(), record)
 	require.NoError(t, err)
 
@@ -661,137 +681,206 @@ func TestRedisStorage_Query_NilFilter(t *testing.T) {
 	assert.Len(t, results, 1)
 }
 
-func TestRedisStorage_Query_EndBeyondRecords(t *testing.T) {
+func TestStorage_Query_EndBeyondRecords(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write 3 records
 	for i := 0; i < 3; i++ {
-		record := NewRecord(EventLoginSuccess, ResultSuccess).
+		record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 			SetTimestamp(now + int64(i))
 		err := storage.Write(context.Background(), record)
 		require.NoError(t, err)
 	}
 
 	// Query with large limit (should return all)
-	filter := DefaultQueryFilter().WithLimit(100)
+	filter := audit.DefaultQueryFilter().WithLimit(100)
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 3)
 }
 
-func TestRedisStorage_Query_WithResultFilter(t *testing.T) {
+func TestStorage_Query_WithResultFilter(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write records with different results
-	record1 := NewRecord(EventLoginSuccess, ResultSuccess).
+	record1 := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 		SetTimestamp(now)
 	err := storage.Write(context.Background(), record1)
 	require.NoError(t, err)
 
-	record2 := NewRecord(EventLoginFailed, ResultFailure).
+	record2 := audit.NewRecord(audit.EventLoginFailed, audit.ResultFailure).
 		SetTimestamp(now + 1)
 	err = storage.Write(context.Background(), record2)
 	require.NoError(t, err)
 
 	// Filter by result
-	filter := DefaultQueryFilter().WithResult("success")
+	filter := audit.DefaultQueryFilter().WithResult("success")
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 }
 
-func TestRedisStorage_Query_StartEndTimeFilters(t *testing.T) {
+func TestStorage_Query_StartEndTimeFilters(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write records at different times
 	for i := 0; i < 5; i++ {
-		record := NewRecord(EventLoginSuccess, ResultSuccess).
+		record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 			SetTimestamp(now + int64(i*100))
 		err := storage.Write(context.Background(), record)
 		require.NoError(t, err)
 	}
 
 	// Filter with StartTime only
-	filter := &QueryFilter{Limit: 100, StartTime: now + 200}
+	filter := &audit.QueryFilter{Limit: 100, StartTime: now + 200}
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 3)
 
 	// Filter with EndTime only
-	filter = &QueryFilter{Limit: 100, EndTime: now + 200}
+	filter = &audit.QueryFilter{Limit: 100, EndTime: now + 200}
 	results, err = storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 3)
 }
 
-func TestRedisStorage_Query_EventTypeFilter(t *testing.T) {
+func TestStorage_Query_EventTypeFilter(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write records with different event types
-	record1 := NewRecord(EventLoginSuccess, ResultSuccess).SetTimestamp(now)
+	record1 := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).SetTimestamp(now)
 	err := storage.Write(context.Background(), record1)
 	require.NoError(t, err)
 
-	record2 := NewRecord(EventLogout, ResultSuccess).SetTimestamp(now + 1)
+	record2 := audit.NewRecord(audit.EventLogout, audit.ResultSuccess).SetTimestamp(now + 1)
 	err = storage.Write(context.Background(), record2)
 	require.NoError(t, err)
 
 	// Filter by event type
-	filter := DefaultQueryFilter().WithEventType("login_success")
+	filter := audit.DefaultQueryFilter().WithEventType("login_success")
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 }
 
-func TestRedisStorage_Query_UserFilter(t *testing.T) {
+func TestStorage_Query_UserFilter(t *testing.T) {
 	client, mr := newTestRedisClient(t)
 	defer mr.Close()
 	defer func() { _ = client.Close() }()
 
-	storage := NewRedisStorage(client)
+	storage := New(client)
 
 	now := time.Now().Unix()
 
 	// Write records with different user IDs
-	record1 := NewRecord(EventLoginSuccess, ResultSuccess).
+	record1 := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 		WithUserID("user1").
 		SetTimestamp(now)
 	err := storage.Write(context.Background(), record1)
 	require.NoError(t, err)
 
-	record2 := NewRecord(EventLoginSuccess, ResultSuccess).
+	record2 := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 		WithUserID("user2").
 		SetTimestamp(now + 1)
 	err = storage.Write(context.Background(), record2)
 	require.NoError(t, err)
 
 	// Filter by user ID
-	filter := DefaultQueryFilter().WithUserID("user1")
+	filter := audit.DefaultQueryFilter().WithUserID("user1")
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
+}
+
+// The store accepts every go-redis client shape, not just a standalone one: a
+// cluster or Sentinel deployment is where an audit trail matters most.
+// Compile-time only; nothing here dials.
+var (
+	_ Client = (*redis.Client)(nil)
+	_ Client = (*redis.ClusterClient)(nil)
+	_ Client = (*redis.Ring)(nil)
+	_ Client = (redis.UniversalClient)(nil)
+)
+
+// A Storage is usable wherever the root package wants an audit.Storage.
+var _ audit.Storage = (*Storage)(nil)
+
+// A nil client is reported, not panicked on. The typed-nil case is the one
+// that actually reaches here -- an unassigned *redis.Client field, or a
+// constructor that returned early -- and a plain c == nil does not catch it.
+func TestStorage_NilClient(t *testing.T) {
+	var typedNil *redis.Client
+
+	for _, tt := range []struct {
+		name    string
+		storage *Storage
+	}{
+		{"untyped nil", New(nil)},
+		{"typed nil", New(typedNil)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess)
+
+			assert.ErrorIs(t, tt.storage.Write(ctx, record), ErrNilClient)
+
+			_, err := tt.storage.Query(ctx, audit.DefaultQueryFilter())
+			assert.ErrorIs(t, err, ErrNilClient)
+
+			_, err = tt.storage.Cleanup(ctx)
+			assert.ErrorIs(t, err, ErrNilClient)
+
+			// Close is the exception: nothing to close is not an error.
+			assert.NoError(t, tt.storage.Close())
+		})
+	}
+}
+
+// A store built against the Client interface works through any client shape.
+// miniredis is a single server, so this exercises the interface itself rather
+// than cluster routing: what matters is that the code path never needs a
+// concrete *redis.Client.
+func TestStorage_ThroughUniversalClient(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+
+	var client redis.UniversalClient = redis.NewUniversalClient(&redis.UniversalOptions{
+		Addrs: []string{mr.Addr()},
+	})
+	defer func() { _ = client.Close() }()
+
+	storage := New(client)
+	ctx := context.Background()
+
+	require.NoError(t, storage.Write(ctx, audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).WithUserID("u1")))
+
+	results, err := storage.Query(ctx, audit.DefaultQueryFilter())
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "u1", results[0].UserID)
 }

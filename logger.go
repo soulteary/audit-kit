@@ -15,9 +15,6 @@ type Config struct {
 	// MaskDestination controls whether destinations (phone/email) should be masked
 	MaskDestination bool
 
-	// TTL for Redis/cache storage (0 means use storage default)
-	TTL time.Duration
-
 	// Writer configuration (for async writing)
 	Writer *WriterConfig
 
@@ -36,7 +33,6 @@ func DefaultConfig() *Config {
 	return &Config{
 		Enabled:         true,
 		MaskDestination: true,
-		TTL:             7 * 24 * time.Hour, // 7 days
 		Writer:          DefaultWriterConfig(),
 	}
 }

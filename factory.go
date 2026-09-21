@@ -4,9 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 // StorageType represents the type of storage backend
@@ -28,11 +25,19 @@ type StorageOptions struct {
 	// Database storage options
 	DatabaseURL string
 	TableName   string
+	// DriverName overrides the database/sql driver name derived from
+	// DatabaseURL's scheme; see [DatabaseConfig.DriverName].
+	DriverName string
 
-	// Redis storage options
-	RedisClient *redis.Client
-	RedisPrefix string
-	RedisTTL    time.Duration
+	// RedisStorage is a Redis-backed storage for [StorageTypeRedis]. Build it
+	// with the redisstore subpackage and assign it here:
+	//
+	//	opts.RedisStorage = redisstore.New(client)
+	//
+	// The root package keeps no go-redis types of its own, so that a program
+	// which never selects Redis does not link go-redis. The field is a
+	// [Storage], so any backend can stand in for Redis in a test.
+	RedisStorage Storage
 }
 
 // NewStorageFromType creates a storage instance based on type
@@ -53,7 +58,8 @@ func NewStorageFromType(storageType StorageType, opts *StorageOptions) (Storage,
 			return nil, fmt.Errorf("database URL is required for database storage")
 		}
 		config := &DatabaseConfig{
-			TableName: opts.TableName,
+			TableName:  opts.TableName,
+			DriverName: opts.DriverName,
 		}
 		if config.TableName == "" {
 			config.TableName = "audit_logs"
@@ -61,14 +67,10 @@ func NewStorageFromType(storageType StorageType, opts *StorageOptions) (Storage,
 		return NewDatabaseStorageWithConfig(opts.DatabaseURL, config)
 
 	case StorageTypeRedis:
-		if opts.RedisClient == nil {
-			return nil, fmt.Errorf("redis client is required for redis storage")
+		if opts.RedisStorage == nil {
+			return nil, fmt.Errorf("redis storage is required for redis storage: build it with the redisstore subpackage (redisstore.New(client)) and set StorageOptions.RedisStorage")
 		}
-		config := &RedisConfig{
-			KeyPrefix: opts.RedisPrefix,
-			TTL:       opts.RedisTTL,
-		}
-		return NewRedisStorageWithConfig(opts.RedisClient, config), nil
+		return opts.RedisStorage, nil
 
 	case StorageTypeNone, "":
 		return nil, nil
