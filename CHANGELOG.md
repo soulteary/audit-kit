@@ -10,65 +10,61 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+Dependency refresh only. No API was removed and no call needs rewriting.
+
+- secure-kit is `github.com/soulteary/secure-kit/v2` v2.1.0 (was v2.0.0). No
+  library code changed between the two: v2.1.0 rewrote secure-kit's own tests
+  against the standard library, which takes `testify` and `go.yaml.in/yaml/v3`
+  out of *its* `go.mod`. `go mod tidy` in an importing module walks the tests
+  of the packages it imports, so a test dependency there is not private to it
+  — but this module requires testify directly for its own tests and keeps it
+  in the graph either way. `go.sum` changes by two lines and nothing else
+  shifts: a program importing only this package sees the same 26 modules, 28
+  `go.sum` lines, one `// indirect` requirement and 137 linked packages as
+  [2.1.0].
+
+## [2.1.0] — 2026-09-21
+
 ### Changed
 
-- **secure-kit is `github.com/soulteary/secure-kit/v2` v2.1.0** (was
-  `github.com/soulteary/secure-kit` v1.6.0). `mask.go` calls `MaskEmail` and
-  `MaskPhone`, nothing else here touches secure-kit, and both keep their
-  signature and their output: secure-kit's `mask.go` is byte-identical across
-  the two versions, and this module's mask tests pin the exact strings. No
-  secure-kit type appears in this module's exported API, so nothing a caller
-  wrote changes.
+- **secure-kit v1.6.0 → v2.0.0**, which is the follow-up the 2.0.0 notes below
+  named and could not make on their own:
 
-  What it settles is a program linking secure-kit twice. To the go command
-  `secure-kit` and `secure-kit/v2` are different packages, not two versions of
-  one — so a program that had moved to secure-kit/v2 while this module stayed
-  on v1 linked both, carrying two copies of the same masking rules and two
-  modules to keep patched. It now links one.
+  > `mask.go` uses secure-kit's `MaskEmail`/`MaskPhone`, and those live in the
+  > same package as its argon2 and bcrypt helpers, so every consumer links
+  > password hashing it cannot call. A `mask` subpackage in secure-kit would
+  > take the root package to stdlib-only without duplicating the masking rules.
 
-  The move also drops `golang.org/x/crypto`. v1 kept its Argon2id and bcrypt
-  helpers in the root package, so importing it for two masking functions
-  linked password hashing no caller here can reach. [2.0.0] measured that cost
-  and proposed a `mask` subpackage in secure-kit; secure-kit's own v2 solved it
-  from the other side, by moving the password helpers to its `passwd`
-  subpackage. This module's root package now links exactly one non-stdlib
-  package — secure-kit/v2 — and a program that imports it keeps
-  `github.com/soulteary/secure-kit/v2` as its only `// indirect` requirement.
+  secure-kit v2.0.0 did the equivalent from the other side: it moved argon2 and
+  bcrypt into a `passwd` subpackage, leaving the masking helpers in a root
+  package that no longer needs `golang.org/x/crypto`. `mask.go` changes its
+  import path and nothing else — the functions kept their names and their
+  behaviour.
 
-### Measured
+  Measured for a program importing only this package, `-trimpath`, go1.27.0
+  linux/amd64:
 
-For a program that imports this module's root package and secure-kit/v2
-directly — the case the move is for — built from the same source against each
-version with `go build -trimpath`:
+  | | v2.0.0 | v2.1.0 |
+  |---|---|---|
+  | modules in `go list -m all` | 32 | 26 |
+  | `go.sum` lines | 30 | 28 |
+  | `// indirect` requirements in the consumer's `go.mod` | 3 | 1 |
+  | linked packages | 142 | 137 |
+  | binary size | 3,341,838 bytes | 3,277,091 bytes (−1.9%) |
 
-| | secure-kit v1.6.0 | secure-kit/v2 v2.1.0 |
-|---|---|---|
-| secure-kit modules linked | 2 | 1 |
-| Binary size | 3,342,199 B | 3,276,686 B (−2.0%) |
-| Linked packages | 143 | 137 |
-| Non-stdlib packages linked | 10 | 4 |
-| `// indirect` requirements in the consumer's `go.mod` | 3 | 0 |
-| Modules in the consumer's `go.sum` | 16 | 14 |
+  `golang.org/x/crypto` and `golang.org/x/sys` leave the consumer's `go.mod`
+  entirely; `secure-kit/v2` is the one requirement left.
 
-Five packages leave: secure-kit v1 itself, the `argon2`, `bcrypt`, `blake2b`
-and `blowfish` packages of `golang.org/x/crypto` its root package pulled in,
-and `golang.org/x/sys/cpu` behind them. `golang.org/x/crypto` and
-`golang.org/x/sys` leave the consumer's `go.mod` and `go.sum` with them.
+  The 2.0.0 note also measured the alternative — inlining the two functions —
+  at 129 linked packages. Keeping the dependency costs 8 more than that, all
+  of them standard library packages secure-kit's root reaches for its SHA,
+  HMAC, random and comparison helpers. That is the price of one source of
+  truth for the masking rules rather than a second copy here, and it is worth
+  paying: a masking rule that drifts between two implementations is a privacy
+  bug nobody sees until it is in a log.
 
-A program that imports only the root package — the case [2.0.0] measured —
-gains the same five: 142 → 137 linked packages, 9 → 4 non-stdlib, 15 → 14
-modules in `go.sum`, three `// indirect` requirements down to one, and
-4,566,369 → 4,500,510 bytes.
-
-### Tests
-
-- `TestNewDatabaseStorage_InvalidURL` asserts *which* error an invalid database
-  URL produces. [2.0.0] fixed a `postgres://` scheme comparison that could
-  never be true, and noted that the test covering it asserted only that *an*
-  error came back, so it passed throughout. Each URL is now a subtest asserting
-  the `unsupported database URL format` message, with a truncated `postgres:/`
-  case so a prefix check that slices instead of comparing shows up as a panic
-  rather than a pass.
+  No API changes. Nothing in this package's surface names a secure-kit type,
+  so a consumer notices only the smaller module graph.
 
 ## [2.0.0] — 2026-09-21
 
