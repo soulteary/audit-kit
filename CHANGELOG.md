@@ -10,6 +10,49 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-09-21
+
+### Changed
+
+- **secure-kit v1.6.0 → v2.0.0**, which is the follow-up the 2.0.0 notes below
+  named and could not make on their own:
+
+  > `mask.go` uses secure-kit's `MaskEmail`/`MaskPhone`, and those live in the
+  > same package as its argon2 and bcrypt helpers, so every consumer links
+  > password hashing it cannot call. A `mask` subpackage in secure-kit would
+  > take the root package to stdlib-only without duplicating the masking rules.
+
+  secure-kit v2.0.0 did the equivalent from the other side: it moved argon2 and
+  bcrypt into a `passwd` subpackage, leaving the masking helpers in a root
+  package that no longer needs `golang.org/x/crypto`. `mask.go` changes its
+  import path and nothing else — the functions kept their names and their
+  behaviour.
+
+  Measured for a program importing only this package, `-trimpath`, go1.27.0
+  linux/amd64:
+
+  | | v2.0.0 | v2.1.0 |
+  |---|---|---|
+  | modules in `go list -m all` | 32 | 26 |
+  | `go.sum` lines | 30 | 28 |
+  | `// indirect` requirements in the consumer's `go.mod` | 3 | 1 |
+  | linked packages | 142 | 137 |
+  | binary size | 3,341,838 bytes | 3,277,091 bytes (−1.9%) |
+
+  `golang.org/x/crypto` and `golang.org/x/sys` leave the consumer's `go.mod`
+  entirely; `secure-kit/v2` is the one requirement left.
+
+  The 2.0.0 note also measured the alternative — inlining the two functions —
+  at 129 linked packages. Keeping the dependency costs 8 more than that, all
+  of them standard library packages secure-kit's root reaches for its SHA,
+  HMAC, random and comparison helpers. That is the price of one source of
+  truth for the masking rules rather than a second copy here, and it is worth
+  paying: a masking rule that drifts between two implementations is a privacy
+  bug nobody sees until it is in a log.
+
+  No API changes. Nothing in this package's surface names a secure-kit type,
+  so a consumer notices only the smaller module graph.
+
 ## [2.0.0] — 2026-09-21
 
 Every breaking change this kit had queued up, in one release. That is
