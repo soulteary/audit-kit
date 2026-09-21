@@ -375,6 +375,16 @@ config := &audit.Config{
 
 结果取值为 `audit.ResultSuccess`、`audit.ResultFailure` 和 `audit.ResultPending`。
 
+## 升级说明（v1.10.0）
+
+仅升级依赖。没有删除任何 API，调用方无需改代码。
+
+- SQLite 驱动为 `modernc.org/sqlite` v1.59.0（此前 v1.58.0）。它自己的依赖没有变动，
+  所以 `go.sum` 只改了两行，依赖图的其他部分不受影响。
+- 库代码本身不链接它。`modernc.org/sqlite` 是一个 `database/sql` 驱动，只有本模块的
+  测试会 import 它；README 把它列为三个可选驱动之一 —— 所以这个新版本只有在你自己
+  import 它的时候才会进入你的构建。
+
 ## 升级说明（v1.9.0）
 
 仅升级依赖。没有删除任何 API，调用方无需改代码。
