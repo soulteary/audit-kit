@@ -386,6 +386,18 @@ config := &audit.Config{
 Results are `audit.ResultSuccess`, `audit.ResultFailure` and
 `audit.ResultPending`.
 
+## Upgrade Notes (v1.10.0)
+
+Dependency refresh only. No API was removed and no call needs rewriting.
+
+- The SQLite driver is `modernc.org/sqlite` v1.59.0 (was v1.58.0). Its own
+  dependencies did not move, so `go.sum` changes by two lines and nothing else
+  in the graph shifts.
+- Nothing in the library links it. `modernc.org/sqlite` is a `database/sql`
+  driver that only this module's tests import, and the README lists it as one of
+  three optional drivers you pick between — so the new version reaches your
+  build only if you import it yourself.
+
 ## Upgrade Notes (v1.9.0)
 
 Dependency refresh only. No API was removed and no call needs rewriting.

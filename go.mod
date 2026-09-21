@@ -10,7 +10,7 @@ require (
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/soulteary/secure-kit v1.6.0
 	github.com/stretchr/testify v1.12.1
-	modernc.org/sqlite v1.58.0
+	modernc.org/sqlite v1.59.0
 )
 
 require (
