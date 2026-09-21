@@ -3,7 +3,7 @@ package audit
 import (
 	"net"
 
-	secure "github.com/soulteary/secure-kit"
+	secure "github.com/soulteary/secure-kit/v2"
 )
 
 // MaskDestination masks a destination (phone or email) based on channel
