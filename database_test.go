@@ -399,18 +399,21 @@ func TestDatabaseStorage_Query_PostgresBranch(t *testing.T) {
 }
 
 func TestNewDatabaseStorage_InvalidURL(t *testing.T) {
-	// Test unsupported URL format
-	_, err := NewDatabaseStorage("invalid://localhost/db")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported database URL format")
-
-	// Test empty URL
-	_, err = NewDatabaseStorage("")
-	assert.Error(t, err)
-
-	// Test short URL
-	_, err = NewDatabaseStorage("short")
-	assert.Error(t, err)
+	// Assert the message, not just that some error came back: a bare
+	// assert.Error passes whichever way the call fails, which is how v1's
+	// broken postgres:// scheme match went unnoticed.
+	for _, url := range []string{
+		"invalid://localhost/db", // unsupported scheme
+		"",                       // empty URL
+		"short",                  // no scheme at all
+		"postgres:/",             // truncated scheme, must not panic
+	} {
+		t.Run(url, func(t *testing.T) {
+			_, err := NewDatabaseStorage(url)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unsupported database URL format")
+		})
+	}
 }
 
 func TestNewDatabaseStorageFromDB_InvalidTableName(t *testing.T) {
