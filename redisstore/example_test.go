@@ -54,7 +54,9 @@ func Example() {
 // The store takes any go-redis client shape, so a cluster needs no special
 // case.
 func ExampleNew_cluster() {
-	var client redis.UniversalClient = redis.NewUniversalClient(&redis.UniversalOptions{
+	// NewUniversalClient returns a redis.UniversalClient, which satisfies
+	// redisstore.Client just as *redis.Client does.
+	client := redis.NewUniversalClient(&redis.UniversalOptions{
 		Addrs: []string{"10.0.0.1:6379", "10.0.0.2:6379", "10.0.0.3:6379"},
 	})
 	defer func() { _ = client.Close() }()

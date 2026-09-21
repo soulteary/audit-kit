@@ -869,7 +869,9 @@ func TestStorage_ThroughUniversalClient(t *testing.T) {
 	require.NoError(t, err)
 	defer mr.Close()
 
-	var client redis.UniversalClient = redis.NewUniversalClient(&redis.UniversalOptions{
+	// A redis.UniversalClient, not a *redis.Client: the store only ever sees
+	// the Client interface.
+	client := redis.NewUniversalClient(&redis.UniversalOptions{
 		Addrs: []string{mr.Addr()},
 	})
 	defer func() { _ = client.Close() }()
