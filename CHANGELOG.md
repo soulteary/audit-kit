@@ -10,6 +10,19 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+Dependency refresh only. No API was removed and no call needs rewriting.
+
+- secure-kit is `github.com/soulteary/secure-kit/v2` v2.1.0 (was v2.0.0). No
+  library code changed between the two: v2.1.0 rewrote secure-kit's own tests
+  against the standard library, which takes `testify` and `go.yaml.in/yaml/v3`
+  out of *its* `go.mod`. `go mod tidy` in an importing module walks the tests
+  of the packages it imports, so a test dependency there is not private to it
+  — but this module requires testify directly for its own tests and keeps it
+  in the graph either way. `go.sum` changes by two lines and nothing else
+  shifts: a program importing only this package sees the same 26 modules, 28
+  `go.sum` lines, one `// indirect` requirement and 137 linked packages as
+  [2.1.0].
+
 ## [2.1.0] — 2026-09-21
 
 ### Changed
