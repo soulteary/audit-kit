@@ -146,7 +146,7 @@ func (s *FileStorage) Query(ctx context.Context, filter *QueryFilter) ([]*Record
 	for i := len(allRecords) - 1; i >= 0; i-- {
 		record := allRecords[i]
 
-		if !matchesFilter(record, filter) {
+		if !filter.Matches(record) {
 			continue
 		}
 
@@ -219,36 +219,4 @@ func (s *FileStorage) Rotate() error {
 // FilePath returns the file path
 func (s *FileStorage) FilePath() string {
 	return s.filePath
-}
-
-// matchesFilter checks if a record matches the filter criteria
-func matchesFilter(record *Record, filter *QueryFilter) bool {
-	if filter.EventType != "" && string(record.EventType) != filter.EventType {
-		return false
-	}
-	if filter.UserID != "" && record.UserID != filter.UserID {
-		return false
-	}
-	if filter.ChallengeID != "" && record.ChallengeID != filter.ChallengeID {
-		return false
-	}
-	if filter.SessionID != "" && record.SessionID != filter.SessionID {
-		return false
-	}
-	if filter.Channel != "" && record.Channel != filter.Channel {
-		return false
-	}
-	if filter.Result != "" && string(record.Result) != filter.Result {
-		return false
-	}
-	if filter.IP != "" && record.IP != filter.IP {
-		return false
-	}
-	if filter.StartTime > 0 && record.Timestamp < filter.StartTime {
-		return false
-	}
-	if filter.EndTime > 0 && record.Timestamp > filter.EndTime {
-		return false
-	}
-	return true
 }

@@ -7,10 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,31 +32,26 @@ func TestNewStorageFromType_File_NoPath(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// The root package cannot build a Redis storage -- that would mean importing
+// go-redis -- so the factory returns the one the caller built with the
+// redisstore subpackage. This test stands in for it with any other Storage,
+// which is exactly what the field's type allows.
 func TestNewStorageFromType_Redis(t *testing.T) {
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	defer func() { _ = client.Close() }()
+	built := NewNoopStorage()
 
 	storage, err := NewStorageFromType(StorageTypeRedis, &StorageOptions{
-		RedisClient: client,
-		RedisPrefix: "test:audit:",
-		RedisTTL:    24 * time.Hour,
+		RedisStorage: built,
 	})
 	require.NoError(t, err)
-	require.NotNil(t, storage)
-
-	_, ok := storage.(*RedisStorage)
-	assert.True(t, ok)
+	assert.Same(t, built, storage)
 }
 
-func TestNewStorageFromType_Redis_NoClient(t *testing.T) {
+func TestNewStorageFromType_Redis_NoStorage(t *testing.T) {
 	_, err := NewStorageFromType(StorageTypeRedis, &StorageOptions{})
-	assert.Error(t, err)
+	require.Error(t, err)
+	// The message has to say where a Redis storage now comes from, because
+	// this is the error a v1 user upgrading meets first.
+	assert.Contains(t, err.Error(), "redisstore")
 }
 
 func TestNewStorageFromType_Database_NoURL(t *testing.T) {
@@ -298,28 +290,16 @@ func TestNewStorageFromType_DatabaseWithTableName(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestNewStorageFromType_RedisWithConfig(t *testing.T) {
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+// A driver name reaches DatabaseConfig from the factory options. The call
+// fails -- nothing registers "not-a-real-driver" -- but it fails naming that
+// driver, which proves the option was not dropped on the way through.
+func TestNewStorageFromType_DatabaseDriverName(t *testing.T) {
+	_, err := NewStorageFromType(StorageTypeDatabase, &StorageOptions{
+		DatabaseURL: "postgres://user:pass@localhost:5432/db",
+		DriverName:  "not-a-real-driver",
 	})
-	defer func() { _ = client.Close() }()
-
-	storage, err := NewStorageFromType(StorageTypeRedis, &StorageOptions{
-		RedisClient: client,
-		RedisPrefix: "custom:",
-		RedisTTL:    1 * time.Hour,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, storage)
-
-	rs, ok := storage.(*RedisStorage)
-	assert.True(t, ok)
-	assert.Equal(t, "custom:", rs.KeyPrefix())
-	assert.Equal(t, 1*time.Hour, rs.TTL())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not-a-real-driver")
 }
 
 // errorStorage is a storage that always returns errors

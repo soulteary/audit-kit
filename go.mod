@@ -1,4 +1,4 @@
-module github.com/soulteary/audit-kit
+module github.com/soulteary/audit-kit/v2
 
 go 1.27.0
 

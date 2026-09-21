@@ -5,11 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
-
-	_ "github.com/go-sql-driver/mysql" // MySQL driver
-	_ "github.com/lib/pq"              // PostgreSQL driver
 )
 
 const maxTableNameLen = 64
@@ -37,17 +35,74 @@ func validateTableName(name string) error {
 	return nil
 }
 
-// DatabaseStorage implements Storage interface for database-based audit logging
-// Supports PostgreSQL and MySQL
+// driverImportHint names the driver package a dialect is usually served by,
+// so an unregistered driver produces an error the caller can act on.
+var driverImportHint = map[string]string{
+	"postgres": `_ "github.com/lib/pq"`,
+	"pgx":      `_ "github.com/jackc/pgx/v5/stdlib"`,
+	"mysql":    `_ "github.com/go-sql-driver/mysql"`,
+	"sqlite":   `_ "modernc.org/sqlite"`,
+	"sqlite3":  `_ "github.com/mattn/go-sqlite3"`,
+}
+
+// parseDatabaseURL maps a URL scheme to the SQL dialect this package generates,
+// the database/sql driver name that dialect is registered under by default, and
+// the DSN to hand that driver.
+func parseDatabaseURL(databaseURL string) (dbType, driver, dsn string, err error) {
+	switch {
+	// lib/pq and pgx both take the URL as-is, scheme included.
+	case strings.HasPrefix(databaseURL, "postgres://"):
+		return "postgres", "postgres", databaseURL, nil
+	case strings.HasPrefix(databaseURL, "postgresql://"):
+		return "postgres", "postgres", databaseURL, nil
+	// go-sql-driver/mysql takes a bare DSN, so the scheme is stripped.
+	case strings.HasPrefix(databaseURL, "mysql://"):
+		return "mysql", "mysql", strings.TrimPrefix(databaseURL, "mysql://"), nil
+	case strings.HasPrefix(databaseURL, "sqlite://"):
+		return "sqlite", "sqlite", strings.TrimPrefix(databaseURL, "sqlite://"), nil
+	default:
+		return "", "", "", fmt.Errorf("unsupported database URL format, must start with postgres://, postgresql://, mysql:// or sqlite://")
+	}
+}
+
+// checkDriverRegistered reports whether the program has registered driver with
+// database/sql, and if not, which import registers it.
+func checkDriverRegistered(driver string) error {
+	registered := sql.Drivers()
+	if slices.Contains(registered, driver) {
+		return nil
+	}
+	hint := driverImportHint[driver]
+	if hint == "" {
+		hint = "the driver package for " + driver
+	}
+	return fmt.Errorf(
+		"database/sql driver %q is not registered: this package imports no driver, "+
+			"so the program must do it, for example with a blank import of the driver package (import %s); "+
+			"registered drivers: %v",
+		driver, hint, registered)
+}
+
+// DatabaseStorage implements Storage interface for database-based audit logging.
+// It generates PostgreSQL, MySQL and SQLite flavoured SQL, and works with any
+// database/sql driver the program registers for one of those dialects.
 type DatabaseStorage struct {
 	db        *sql.DB
-	dbType    string // "postgres" or "mysql"
+	dbType    string // "postgres", "mysql" or "sqlite"
 	tableName string
 }
 
 // DatabaseConfig holds configuration for database storage
 type DatabaseConfig struct {
 	TableName string // Custom table name (default: "audit_logs")
+
+	// DriverName overrides the database/sql driver name derived from the URL
+	// scheme ("postgres", "mysql" or "sqlite"). Set it when the driver the
+	// program registers is not named after its dialect: "pgx" for
+	// jackc/pgx's stdlib driver, "sqlite3" for mattn/go-sqlite3,
+	// "mysql+instrumented" for a wrapped driver, and so on. The dialect --
+	// which SQL this package generates -- still comes from the URL scheme.
+	DriverName string
 }
 
 // DefaultDatabaseConfig returns default database configuration
@@ -57,12 +112,24 @@ func DefaultDatabaseConfig() *DatabaseConfig {
 	}
 }
 
-// NewDatabaseStorage creates a new database storage instance
+// NewDatabaseStorage creates a new database storage instance from a URL.
+//
+// This package imports no database driver, so the program must register one
+// itself -- a blank import of github.com/lib/pq, github.com/go-sql-driver/mysql
+// or modernc.org/sqlite is the usual way. Without it the call fails with a
+// message naming the missing import; nothing is dialled. Use
+// [NewDatabaseStorageFromDB] to hand over a *sql.DB the program already has.
 func NewDatabaseStorage(databaseURL string) (*DatabaseStorage, error) {
 	return NewDatabaseStorageWithConfig(databaseURL, nil)
 }
 
-// NewDatabaseStorageWithConfig creates a new database storage instance with config
+// NewDatabaseStorageWithConfig creates a new database storage instance with config.
+//
+// The URL scheme picks the dialect and the default driver name: postgres:// and
+// postgresql:// use "postgres", mysql:// uses "mysql", sqlite:// uses "sqlite".
+// Set [DatabaseConfig.DriverName] when the registered driver goes by another
+// name, such as "pgx" or "sqlite3". As with [NewDatabaseStorage], the driver
+// must already be registered with database/sql by the program.
 func NewDatabaseStorageWithConfig(databaseURL string, config *DatabaseConfig) (*DatabaseStorage, error) {
 	if config == nil {
 		config = DefaultDatabaseConfig()
@@ -75,21 +142,20 @@ func NewDatabaseStorageWithConfig(databaseURL string, config *DatabaseConfig) (*
 		return nil, err
 	}
 
-	// Detect database type from URL
-	var dbType string
-	var driver string
-	var dsn string
-	if len(databaseURL) >= 10 && databaseURL[:10] == "postgres://" {
-		dbType = "postgres"
-		driver = "postgres"
-		dsn = databaseURL
-	} else if len(databaseURL) >= 8 && databaseURL[:8] == "mysql://" {
-		dbType = "mysql"
-		driver = "mysql"
-		// Convert mysql:// to DSN format
-		dsn = databaseURL[8:]
-	} else {
-		return nil, fmt.Errorf("unsupported database URL format, must start with postgres:// or mysql://")
+	// Detect dialect, driver and DSN from the URL scheme.
+	dbType, driver, dsn, err := parseDatabaseURL(databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if config.DriverName != "" {
+		driver = config.DriverName
+	}
+
+	// This package registers no driver of its own, so say plainly which import
+	// is missing rather than leaving the caller with database/sql's
+	// "unknown driver" message.
+	if err := checkDriverRegistered(driver); err != nil {
+		return nil, err
 	}
 
 	// Open database connection. When logging errors from this package, do not
@@ -122,7 +188,14 @@ func NewDatabaseStorageWithConfig(databaseURL string, config *DatabaseConfig) (*
 	return storage, nil
 }
 
-// NewDatabaseStorageFromDB creates a new database storage from existing *sql.DB
+// NewDatabaseStorageFromDB creates a new database storage from an existing
+// *sql.DB. dbType selects the SQL flavour and must be "postgres", "mysql" or
+// "sqlite"; the driver behind db is the caller's choice, so a wrapped or
+// instrumented driver works as long as it speaks one of those dialects.
+//
+// Prefer this constructor in a service that already owns a connection pool:
+// it shares the pool and its lifecycle, and needs no URL parsing. Note that
+// [DatabaseStorage.Close] closes the pool it is given.
 func NewDatabaseStorageFromDB(db *sql.DB, dbType string, config *DatabaseConfig) (*DatabaseStorage, error) {
 	if config == nil {
 		config = DefaultDatabaseConfig()

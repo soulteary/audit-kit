@@ -1,6 +1,6 @@
 # audit-kit
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/audit-kit.svg)](https://pkg.go.dev/github.com/soulteary/audit-kit)
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/audit-kit/v2.svg)](https://pkg.go.dev/github.com/soulteary/audit-kit/v2)
 [![Go Report Card](.github/goreportcard.svg)](.github/goreportcard-report.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/audit-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/audit-kit)
@@ -10,10 +10,15 @@
 Go 服务的统一审计日志工具包。提供统一的存储接口（文件、数据库、Redis）、带
 worker 池和有界队列的异步写入、链式记录构造器，以及敏感字段脱敏。
 
+根包不链接任何数据库驱动，也不链接 Redis 客户端：SQL 后端只依赖
+`database/sql`，Redis 后端放在 `redisstore` 子包里。只把审计日志写到文件的
+服务，两者都不会链接进来。
+
 ## 特性
 
 - **存储接口**：所有后端共用一套 `Write`/`Query`/`Close` 接口
 - **多种后端**：文件（JSON Lines）、数据库（PostgreSQL/MySQL/SQLite）、Redis、空实现
+- **用多少付多少**：驱动由使用者自己注册，Redis 独立成子包
 - **异步写入**：worker 池 + 有界队列，写日志不阻塞请求
 - **可靠关闭**：`Stop()` 先把队列排空写完，之后才取消 context
 - **多存储写入**：一条记录同时写入多个后端
@@ -25,15 +30,22 @@ worker 池和有界队列的异步写入、链式记录构造器，以及敏感�
 ## 要求
 
 - **Go 1.27+**（`go.mod` 声明 `go 1.27.0`）
-- 可选：`github.com/redis/go-redis/v9`（Redis 存储）
-- 可选：`github.com/go-sql-driver/mysql`、`github.com/lib/pq` 或
-  `modernc.org/sqlite`（数据库存储）
+- 数据库存储：由**你的程序自己注册** `database/sql` 驱动 ——
+  `github.com/lib/pq`、`github.com/go-sql-driver/mysql`、`modernc.org/sqlite`，
+  或任何实现这三种方言之一的驱动
+- Redis 存储：`github.com/redis/go-redis/v9`，通过
+  `github.com/soulteary/audit-kit/v2/redisstore` 子包引入
+
+两者都不是根包的依赖。不额外 import，就不会额外链接。
 
 ## 安装
 
 ```bash
-go get github.com/soulteary/audit-kit
+go get github.com/soulteary/audit-kit/v2
 ```
+
+从 v1 升级？先看[升级说明（v2.0.0）](#升级说明v200)：import 路径变了，Redis
+与数据库的入口也变了。
 
 ## 快速开始
 
@@ -44,7 +56,7 @@ import (
     "context"
     "log"
 
-    audit "github.com/soulteary/audit-kit"
+    audit "github.com/soulteary/audit-kit/v2"
 )
 
 func main() {
@@ -126,14 +138,25 @@ if stats != nil {
 
 ### 数据库存储
 
+本包不注册任何驱动，按 `database/sql` 的惯例由你的程序注册：
+
 ```go
+import (
+    _ "github.com/lib/pq"            // 或 go-sql-driver/mysql、modernc.org/sqlite
+
+    audit "github.com/soulteary/audit-kit/v2"
+)
+
 // PostgreSQL
 storage, err := audit.NewDatabaseStorage("postgres://user:pass@localhost/db")
 
 // MySQL
 storage, err := audit.NewDatabaseStorage("mysql://user:pass@tcp(localhost:3306)/db")
 
-// 复用已有的 *sql.DB（测试很方便）
+// SQLite
+storage, err := audit.NewDatabaseStorage("sqlite:///var/lib/app/audit.db")
+
+// 复用已有的 *sql.DB —— 服务里已有连接池时优先用这个
 db, _ := sql.Open("sqlite", ":memory:")
 storage, err := audit.NewDatabaseStorageFromDB(db, "sqlite", nil)
 
@@ -141,16 +164,37 @@ storage, err := audit.NewDatabaseStorageFromDB(db, "sqlite", nil)
 storage, err := audit.NewDatabaseStorageWithConfig(dsn, &audit.DatabaseConfig{
     TableName: "audit_records",
 })
+
+// 驱动名与方言不同名的情况：pgx、sqlite3、带埋点的包装驱动。
+// 方言仍然由 URL scheme 决定。
+storage, err := audit.NewDatabaseStorageWithConfig("postgres://…", &audit.DatabaseConfig{
+    DriverName: "pgx",
+})
+```
+
+驱动没注册时，构造函数在拨号之前就会失败，并在错误里写明该补哪个 import：
+
+```
+database/sql driver "postgres" is not registered: this package imports no
+driver, so the program must do it, for example with a blank import of the
+driver package (import _ "github.com/lib/pq"); registered drivers: []
 ```
 
 ### Redis 存储
 
+Redis 在 `redisstore` 子包里，只有 import 它，go-redis 才会进你的二进制：
+
 ```go
-import "github.com/redis/go-redis/v9"
+import (
+    "github.com/redis/go-redis/v9"
+
+    "github.com/soulteary/audit-kit/v2/redisstore"
+)
 
 client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+defer client.Close() // 传进来的客户端，存储不会替你关
 
-storage := audit.NewRedisStorageWithConfig(client, &audit.RedisConfig{
+storage := redisstore.NewWithConfig(client, &redisstore.Config{
     KeyPrefix: "myapp:audit:",
     TTL:       7 * 24 * time.Hour,
 })
@@ -159,11 +203,15 @@ storage := audit.NewRedisStorageWithConfig(client, &audit.RedisConfig{
 removed, err := storage.Cleanup(ctx)
 ```
 
+`redisstore.New` 接收的是 `redisstore.Client` —— 只包含存储真正用到的几个命令，
+因此 `*redis.Client`、`*redis.ClusterClient`、`*redis.Ring`、
+`redis.UniversalClient` 以及任何带埋点的包装客户端都能直接传入。
+
 ### 多存储写入
 
 ```go
 fileStorage, _ := audit.NewFileStorage("/var/log/audit.log")
-redisStorage := audit.NewRedisStorage(redisClient)
+redisStorage := redisstore.New(redisClient)
 
 multi := audit.NewMultiStorage(fileStorage, redisStorage)
 logger := audit.NewLogger(multi, nil)
@@ -172,16 +220,22 @@ logger := audit.NewLogger(multi, nil)
 ### 按配置构造存储
 
 ```go
+opts := &audit.StorageOptions{
+    FilePath:    "/var/log/audit.log",
+    DatabaseURL: os.Getenv("DATABASE_URL"),
+    TableName:   "audit_records",
+}
+
+// Redis 由调用方自己构造，根包因此不必认识 go-redis。
+// 不写这一段也可以，选到 "redis" 时错误信息会说明缺了什么。
+opts.RedisStorage = redisstore.NewWithConfig(redisClient, &redisstore.Config{
+    KeyPrefix: "myapp:audit:",
+    TTL:       7 * 24 * time.Hour,
+})
+
 storage, err := audit.NewStorageFromType(
     audit.ParseStorageType(os.Getenv("AUDIT_STORAGE")), // "file" | "database" | "redis" | "none"
-    &audit.StorageOptions{
-        FilePath:    "/var/log/audit.log",
-        DatabaseURL: os.Getenv("DATABASE_URL"),
-        RedisClient: redisClient,
-        RedisPrefix: "myapp:audit:",
-        RedisTTL:    7 * 24 * time.Hour,
-        TableName:   "audit_records",
-    },
+    opts,
 )
 ```
 
@@ -278,7 +332,6 @@ logger.SetLogCallback(func(record *audit.Record) {
 config := &audit.Config{
     Enabled:         true,               // false 则完全关闭记录
     MaskDestination: true,               // 对 Destination 做手机号/邮箱脱敏
-    TTL:             7 * 24 * time.Hour, // Redis 存储的 TTL
     Writer: &audit.WriterConfig{
         QueueSize:   1000,               // 有界异步队列
         Workers:     2,                  // worker 协程数
@@ -293,7 +346,6 @@ config := &audit.Config{
 |--------|--------|------|
 | `Enabled` | `true` | `false` 时 `Log` 为空操作 |
 | `MaskDestination` | `true` | 按渠道脱敏 `Record.Destination` |
-| `TTL` | `168h`（7 天） | 仅 Redis 有效 |
 | `Writer.QueueSize` | `1000` | 非正值回退为默认值 |
 | `Writer.Workers` | `2` | 非正值回退为默认值 |
 | `Writer.StopTimeout` | `10s` | 非正值回退为默认值 |
@@ -329,12 +381,13 @@ config := &audit.Config{
 | 函数 | 说明 |
 |------|------|
 | `NewFileStorage(path)` | JSON Lines 文件，`Rotate()` 可轮转 |
-| `NewDatabaseStorage(url)` | 由 DSN 连接 PostgreSQL / MySQL |
+| `NewDatabaseStorage(url)` | 由 URL 连接 PostgreSQL / MySQL / SQLite，驱动由你注册 |
 | `NewDatabaseStorageFromDB(db, dbType, cfg)` | 包装已有 `*sql.DB` |
-| `NewRedisStorage(client)` | Redis，`Cleanup(ctx)` 清理索引 |
+| `redisstore.New(client)` | Redis，`Cleanup(ctx)` 清理索引 |
 | `NewMultiStorage(storages…)` | 扇出到多个后端 |
 | `NewNoopStorage()` | 全部丢弃 |
 | `NewStorageFromType(type, opts)` | 按配置构造 |
+| `(*QueryFilter).Matches(record)` | 内存过滤规则，自定义后端可直接复用 |
 
 ### 脱敏
 
@@ -374,6 +427,76 @@ config := &audit.Config{
 | 自定义 | `custom` | 自定义事件 |
 
 结果取值为 `audit.ResultSuccess`、`audit.ResultFailure` 和 `audit.ResultPending`。
+
+## 升级说明（v2.0.0）
+
+所有破坏性改动合并在一个大版本里发布，import 路径只需要改一次，而不是每发一版
+改一次。完整说明与实测数字见 [CHANGELOG.md](CHANGELOG.md)。
+
+**1. import 路径变为 `github.com/soulteary/audit-kit/v2`。**
+
+```bash
+go get github.com/soulteary/audit-kit/v2
+go mod tidy
+```
+
+```go
+audit "github.com/soulteary/audit-kit/v2"
+```
+
+**2. 数据库驱动改由你自己注册。** 此前根包匿名 import 了
+`go-sql-driver/mysql` 和 `lib/pq`，于是只把审计日志写到文件的服务也会把两个
+驱动链接进来。现在按需补上匿名 import：
+
+```go
+import (
+    _ "github.com/lib/pq"            // 或 go-sql-driver/mysql、modernc.org/sqlite
+
+    audit "github.com/soulteary/audit-kit/v2"
+)
+```
+
+`NewDatabaseStorage`、`NewDatabaseStorageWithConfig` 和
+`NewDatabaseStorageFromDB` 的签名都没变。驱动没注册时，URL 构造函数会在拨号
+之前失败，并写明该补哪个 import。
+
+**3. Redis 迁移到 `redisstore` 子包。**
+
+| v1 | v2 |
+|----|----|
+| `audit.NewRedisStorage(client)` | `redisstore.New(client)` |
+| `audit.NewRedisStorageWithConfig(client, cfg)` | `redisstore.NewWithConfig(client, cfg)` |
+| `audit.RedisStorage` | `redisstore.Storage` |
+| `audit.RedisConfig` / `audit.DefaultRedisConfig()` | `redisstore.Config` / `redisstore.DefaultConfig()` |
+| `StorageOptions.RedisClient` / `RedisPrefix` / `RedisTTL` | `StorageOptions.RedisStorage`，用 `redisstore` 构造 |
+
+没有保留兼容 shim：shim 必须 import go-redis，那样就把收益全部还回去了。
+
+**另外注意：** `redisstore.Storage.Close()` 不再关闭传进来的 Redis 客户端 ——
+`MultiStorage.Close` 和 `Logger.Stop` 都会调它，v1 因此会把整个程序的 Redis
+连同审计日志一起关掉。请在创建客户端的地方关闭它，或设置
+`redisstore.Config.CloseClient` 恢复 v1 行为。
+
+**另外删掉了 `Config.TTL`。** 它自称是 Redis 的 TTL，但从来没有被任何代码读取，
+真正生效的一直是 Redis 那边的配置 —— 现在是 `redisstore.Config.TTL`。
+
+**顺带修掉的 bug：** `NewDatabaseStorage` 此前会直接拒绝所有 `postgres://`
+URL —— 用 10 字节的切片去比较 11 字节的字面量，永远不可能相等。此前唯一能用的
+PostgreSQL 路径是 `NewDatabaseStorageFromDB`。
+
+**新增：** `DatabaseConfig.DriverName`（用于 `pgx`、`sqlite3`、带埋点的包装
+驱动）、`sqlite://` 与 `postgresql://` scheme、`QueryFilter.Matches`、
+`redisstore.DefaultKeyPrefix` / `DefaultTTL`，以及可接收 cluster、ring、
+universal 客户端的 `redisstore.Client` 接口。
+
+**收益**（只 import 根包的程序，对比 v1.10.0）：
+
+| | v1.10.0 | v2.0.0 |
+|---|---|---|
+| 二进制体积 | 6,080,647 B | 4,703,739 B（−22.6%） |
+| 链接的包数 | 225 | 142 |
+| 其中非标准库包 | 46 | 9 |
+| 使用者 `go.sum` 中的模块数 | 27 | 15 |
 
 ## 升级说明（v1.10.0）
 
@@ -428,7 +551,9 @@ config := &audit.Config{
   也就带上了密码。打固定文案或判断错误类型。
 - **被丢弃的记录**：队列满时按设计丢弃。请设置 `OnEnqueueFailed` 并按峰值调整
   `QueueSize`；一条都不能丢的场景请用同步 logger。
-- **Redis**：给记录设置 `EventID` 或 `ChallengeID` 以保证键唯一，并定期执行
+- **Redis**：关闭存储不再关闭客户端，请在创建它的地方关闭，或设置
+  `redisstore.Config.CloseClient`。另外给记录设置 `EventID` 或 `ChallengeID`
+  以保证键唯一，并定期执行
   `Cleanup()`——索引键本身没有 TTL。
 - **元数据**：JSON 往返后数字是 `float64`，类型断言时注意。
 
@@ -436,15 +561,17 @@ config := &audit.Config{
 
 ```
 audit-kit/
+├── doc.go       # 包文档与分层说明
 ├── types.go     # Record、事件/结果常量、记录选项
-├── storage.go   # Storage 接口与 QueryFilter
+├── storage.go   # Storage 接口、QueryFilter 与 Matches 规则
 ├── logger.go    # Logger、Config、DefaultConfig
 ├── writer.go    # 异步写入器、worker 池、生命周期
 ├── file.go      # 文件存储（JSON Lines）
-├── database.go  # 数据库存储（PostgreSQL/MySQL/SQLite）
-├── redis.go     # Redis 存储
+├── database.go  # 数据库存储（PostgreSQL/MySQL/SQLite），不 import 驱动
 ├── factory.go   # 存储工厂与多存储
-└── mask.go      # 脱敏工具
+├── mask.go      # 脱敏工具
+├── redisstore/  # Redis 存储 —— 唯一 import go-redis 的包
+└── integrationtest/ # 连真实 PostgreSQL / MySQL 的测试，带构建标签
 ```
 
 ## 测试
@@ -456,6 +583,10 @@ go test ./...
 go test ./... -coverprofile=coverage.out -covermode=atomic
 go tool cover -func=coverage.out
 go tool cover -html=coverage.out -o coverage.html
+
+# 连真实数据库（没设置 URL 时自动跳过）
+TEST_POSTGRES_URL=postgres://… go test -tags=integration ./integrationtest/...
+TEST_MYSQL_URL=user:pass@tcp(localhost:3306)/db go test -tags=integration ./integrationtest/...
 ```
 
 少数测试用 `chmod` 模拟 I/O 失败，而 uid 0 会忽略权限位，因此以 root 运行时这些测试

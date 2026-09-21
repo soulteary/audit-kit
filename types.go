@@ -1,5 +1,3 @@
-// Package audit provides a unified audit logging toolkit for Go services.
-// It supports multiple storage backends (file, database, Redis) and async writing.
 package audit
 
 import (

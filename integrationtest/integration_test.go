@@ -1,8 +1,6 @@
-// go:build integration
 //go:build integration
-// +build integration
 
-package audit
+package integrationtest
 
 import (
 	"context"
@@ -11,13 +9,20 @@ import (
 	"testing"
 	"time"
 
+	// The drivers a real program would register. Blank-imported here and
+	// nowhere else in the module, so they stay out of every consumer's
+	// dependency graph.
+	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	audit "github.com/soulteary/audit-kit/v2"
 )
 
-// Integration tests for real database connections
-// Run with: go test -tags=integration -v ./...
+// Integration tests for real database connections.
+// Run with: go test -tags=integration -v ./integrationtest/...
 
 func TestIntegration_PostgreSQL(t *testing.T) {
 	// Skip if no PostgreSQL connection string
@@ -27,12 +32,12 @@ func TestIntegration_PostgreSQL(t *testing.T) {
 	}
 
 	// Create storage
-	storage, err := NewDatabaseStorage(connStr)
+	storage, err := audit.NewDatabaseStorage(connStr)
 	require.NoError(t, err)
 	defer func() { _ = storage.Close() }()
 
 	// Test write
-	record := NewRecord(EventLoginSuccess, ResultSuccess).
+	record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 		WithUserID("integration_test_user").
 		WithIP("192.168.1.1").
 		WithMetadata("test", "integration")
@@ -41,7 +46,7 @@ func TestIntegration_PostgreSQL(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test query
-	filter := DefaultQueryFilter().WithUserID("integration_test_user")
+	filter := audit.DefaultQueryFilter().WithUserID("integration_test_user")
 	results, err := storage.Query(context.Background(), filter)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(results), 1)
@@ -58,12 +63,12 @@ func TestIntegration_MySQL(t *testing.T) {
 	}
 
 	// Create storage
-	storage, err := NewDatabaseStorage(connStr)
+	storage, err := audit.NewDatabaseStorage(connStr)
 	require.NoError(t, err)
 	defer func() { _ = storage.Close() }()
 
 	// Test write
-	record := NewRecord(EventLoginSuccess, ResultSuccess).
+	record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 		WithUserID("integration_test_user").
 		WithIP("192.168.1.1")
 
@@ -80,7 +85,7 @@ func TestIntegration_PostgreSQL_AllOperations(t *testing.T) {
 		t.Skip("TEST_POSTGRES_URL not set")
 	}
 
-	storage, err := NewDatabaseStorage(connStr)
+	storage, err := audit.NewDatabaseStorage(connStr)
 	require.NoError(t, err)
 	defer func() { _ = storage.Close() }()
 
@@ -89,7 +94,7 @@ func TestIntegration_PostgreSQL_AllOperations(t *testing.T) {
 
 	// Write multiple records
 	for i := 0; i < 5; i++ {
-		record := NewRecord(EventLoginSuccess, ResultSuccess).
+		record := audit.NewRecord(audit.EventLoginSuccess, audit.ResultSuccess).
 			WithUserID(testUserID).
 			WithIP("192.168.1." + string(rune('1'+i))).
 			SetTimestamp(now + int64(i))
@@ -98,7 +103,7 @@ func TestIntegration_PostgreSQL_AllOperations(t *testing.T) {
 	}
 
 	// Query with various filters
-	filter := DefaultQueryFilter().
+	filter := audit.DefaultQueryFilter().
 		WithUserID(testUserID).
 		WithEventType("login_success").
 		WithResult("success").
@@ -109,7 +114,7 @@ func TestIntegration_PostgreSQL_AllOperations(t *testing.T) {
 	assert.Len(t, results, 5)
 
 	// Query with time range
-	filter = DefaultQueryFilter().
+	filter = audit.DefaultQueryFilter().
 		WithUserID(testUserID).
 		WithTimeRange(now+2, now+4)
 
@@ -128,12 +133,12 @@ func TestIntegration_PostgreSQL_FromDB(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	storage, err := NewDatabaseStorageFromDB(db, "postgres", &DatabaseConfig{
+	storage, err := audit.NewDatabaseStorageFromDB(db, "postgres", &audit.DatabaseConfig{
 		TableName: "audit_logs_integration",
 	})
 	require.NoError(t, err)
 
-	record := NewRecord(EventCustom, ResultSuccess).WithUserID("test")
+	record := audit.NewRecord(audit.EventCustom, audit.ResultSuccess).WithUserID("test")
 	err = storage.Write(context.Background(), record)
 	require.NoError(t, err)
 }

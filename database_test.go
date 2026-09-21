@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -443,16 +445,130 @@ func TestNewDatabaseStorageFromDB_UnsupportedType(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported database type")
 }
 
+// Since v2 this package imports no driver, so a well-formed URL whose driver
+// the program has not registered fails before anything is dialled -- and says
+// which import is missing.
 func TestNewDatabaseStorageWithConfig_PostgresURL(t *testing.T) {
-	// This will fail to connect but tests URL parsing
 	_, err := NewDatabaseStorageWithConfig("postgres://user:pass@localhost:5432/db", nil)
-	assert.Error(t, err) // Expected to fail since no server is running
+	require.Error(t, err)
+
+	// v1 rejected every postgres:// URL as malformed: it compared a 10-byte
+	// slice of the URL against the 11-byte literal "postgres://", so the
+	// scheme never matched and the lib/pq blank import could not be reached
+	// through this constructor at all. The URL is well-formed.
+	assert.NotContains(t, err.Error(), "unsupported database URL format")
+	assert.Contains(t, err.Error(), `driver "postgres" is not registered`)
+	assert.Contains(t, err.Error(), "github.com/lib/pq")
+}
+
+func TestNewDatabaseStorageWithConfig_PostgreSQLURL(t *testing.T) {
+	_, err := NewDatabaseStorageWithConfig("postgresql://user:pass@localhost:5432/db", nil)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "unsupported database URL format")
+	assert.Contains(t, err.Error(), `driver "postgres" is not registered`)
 }
 
 func TestNewDatabaseStorageWithConfig_MySQLURL(t *testing.T) {
-	// This will fail to connect but tests URL parsing
 	_, err := NewDatabaseStorageWithConfig("mysql://user:pass@tcp(localhost:3306)/db", nil)
-	assert.Error(t, err) // Expected to fail since no server is running
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "unsupported database URL format")
+	assert.Contains(t, err.Error(), `driver "mysql" is not registered`)
+	assert.Contains(t, err.Error(), "github.com/go-sql-driver/mysql")
+}
+
+func TestParseDatabaseURL(t *testing.T) {
+	tests := []struct {
+		url    string
+		dbType string
+		driver string
+		dsn    string
+		err    bool
+	}{
+		{url: "postgres://u:p@h:5432/db", dbType: "postgres", driver: "postgres", dsn: "postgres://u:p@h:5432/db"},
+		{url: "postgresql://u:p@h:5432/db", dbType: "postgres", driver: "postgres", dsn: "postgresql://u:p@h:5432/db"},
+		{url: "mysql://u:p@tcp(h:3306)/db", dbType: "mysql", driver: "mysql", dsn: "u:p@tcp(h:3306)/db"},
+		{url: "sqlite:///var/lib/audit.db", dbType: "sqlite", driver: "sqlite", dsn: "/var/lib/audit.db"},
+		{url: "sqlite://:memory:", dbType: "sqlite", driver: "sqlite", dsn: ":memory:"},
+		{url: "invalid://localhost/db", err: true},
+		{url: "postgres:/", err: true}, // shorter than the scheme, must not panic
+		{url: "", err: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			dbType, driver, dsn, err := parseDatabaseURL(tt.url)
+			if tt.err {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "unsupported database URL format")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.dbType, dbType)
+			assert.Equal(t, tt.driver, driver)
+			assert.Equal(t, tt.dsn, dsn)
+		})
+	}
+}
+
+// A URL constructor works end to end once the program registers a driver --
+// which this test file does, by blank-importing modernc.org/sqlite exactly as
+// a user of this package now must.
+func TestNewDatabaseStorageWithConfig_SQLiteURL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.db")
+
+	storage, err := NewDatabaseStorageWithConfig("sqlite://"+path, nil)
+	require.NoError(t, err)
+	defer func() { _ = storage.Close() }()
+
+	assert.Equal(t, "sqlite", storage.DBType())
+
+	record := NewRecord(EventLoginSuccess, ResultSuccess).WithUserID("user1")
+	require.NoError(t, storage.Write(context.Background(), record))
+
+	results, err := storage.Query(context.Background(), DefaultQueryFilter())
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "user1", results[0].UserID)
+}
+
+// registerSQLiteAlias registers the already-imported SQLite driver under a
+// second name, standing in for a driver that is not named after its dialect --
+// "pgx", or an instrumented wrapper.
+var registerSQLiteAlias = sync.OnceFunc(func() {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		panic(err)
+	}
+	sql.Register("audit-kit-test-alias", db.Driver())
+	_ = db.Close()
+})
+
+func TestNewDatabaseStorageWithConfig_DriverNameOverride(t *testing.T) {
+	registerSQLiteAlias()
+
+	path := filepath.Join(t.TempDir(), "audit.db")
+
+	storage, err := NewDatabaseStorageWithConfig("sqlite://"+path, &DatabaseConfig{
+		DriverName: "audit-kit-test-alias",
+	})
+	require.NoError(t, err)
+	defer func() { _ = storage.Close() }()
+
+	// The dialect still comes from the URL scheme; only the driver changed.
+	assert.Equal(t, "sqlite", storage.DBType())
+	require.NoError(t, storage.Write(context.Background(), NewRecord(EventLogout, ResultSuccess)))
+}
+
+func TestCheckDriverRegistered(t *testing.T) {
+	// modernc.org/sqlite is imported by this test file.
+	require.NoError(t, checkDriverRegistered("sqlite"))
+
+	err := checkDriverRegistered("nope")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `driver "nope" is not registered`)
+	// An unknown driver has no import hint, but the message still lists what
+	// the program did register, which is what makes a typo obvious.
+	assert.Contains(t, err.Error(), "sqlite")
 }
 
 func TestDatabaseStorage_WriteWithContext(t *testing.T) {

@@ -659,7 +659,7 @@ func TestMatchesFilter_AllConditions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := matchesFilter(record, tt.filter)
+			result := tt.filter.Matches(record)
 			assert.Equal(t, tt.matches, result)
 		})
 	}
