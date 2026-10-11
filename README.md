@@ -31,7 +31,7 @@ subpackage. A service that writes its audit log to a file links neither.
 
 ## Requirements
 
-- **Go 1.27+** (`go.mod` declares `go 1.27.0`)
+- **Go 1.27+** (`go.mod` declares `go 1.27.2`)
 - For database storage: a `database/sql` driver **your program registers** —
   `github.com/lib/pq`, `github.com/go-sql-driver/mysql`, `modernc.org/sqlite`
   or any other driver speaking one of those dialects
