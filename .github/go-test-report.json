@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "tests": {
+    "total": 230,
+    "passed": 230,
+    "failed": 0,
+    "skipped": 0
+  },
+  "coverage": {
+    "covered_statements": 704,
+    "total_statements": 730,
+    "percentage": 96.44,
+    "threshold": 0
+  },
+  "packages": [
+    {
+      "name": ".",
+      "status": "pass",
+      "tests": 188,
+      "failed": 0,
+      "coverage": 96.8
+    },
+    {
+      "name": "integrationtest",
+      "status": "no_tests",
+      "tests": 0,
+      "failed": 0,
+      "coverage": null
+    },
+    {
+      "name": "redisstore",
+      "status": "pass",
+      "tests": 42,
+      "failed": 0,
+      "coverage": 94.29
+    }
+  ],
+  "failures": null
+}
