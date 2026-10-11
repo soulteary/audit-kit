@@ -29,7 +29,7 @@ worker 池和有界队列的异步写入、链式记录构造器，以及敏感�
 
 ## 要求
 
-- **Go 1.27+**（`go.mod` 声明 `go 1.27.0`）
+- **Go 1.27+**（`go.mod` 声明 `go 1.27.2`）
 - 数据库存储：由**你的程序自己注册** `database/sql` 驱动 ——
   `github.com/lib/pq`、`github.com/go-sql-driver/mysql`、`modernc.org/sqlite`，
   或任何实现这三种方言之一的驱动
