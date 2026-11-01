@@ -7,9 +7,9 @@
     "skipped": 0
   },
   "coverage": {
-    "covered_statements": 704,
-    "total_statements": 730,
-    "percentage": 96.44,
+    "covered_statements": 695,
+    "total_statements": 721,
+    "percentage": 96.39,
     "threshold": 0
   },
   "packages": [
@@ -18,7 +18,7 @@
       "status": "pass",
       "tests": 188,
       "failed": 0,
-      "coverage": 96.8
+      "coverage": 96.75
     },
     {
       "name": "integrationtest",
