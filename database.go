@@ -443,57 +443,7 @@ func (s *DatabaseStorage) Query(ctx context.Context, filter *QueryFilter) ([]*Re
 	}
 	filter.Normalize()
 
-	// Build WHERE clause
-	var whereClauses []string
-	var args []interface{}
-	argIndex := 1
-
-	addCondition := func(column, value string) {
-		if value == "" {
-			return
-		}
-		if s.dbType == "postgres" {
-			whereClauses = append(whereClauses, fmt.Sprintf("%s = $%d", column, argIndex))
-		} else {
-			whereClauses = append(whereClauses, fmt.Sprintf("%s = ?", column))
-		}
-		args = append(args, value)
-		argIndex++
-	}
-
-	addCondition("event_type", filter.EventType)
-	addCondition("user_id", filter.UserID)
-	addCondition("challenge_id", filter.ChallengeID)
-	addCondition("session_id", filter.SessionID)
-	addCondition("channel", filter.Channel)
-	addCondition("result", filter.Result)
-	addCondition("ip", filter.IP)
-
-	if filter.StartTime > 0 {
-		if s.dbType == "postgres" {
-			whereClauses = append(whereClauses, fmt.Sprintf("timestamp >= $%d", argIndex))
-		} else {
-			whereClauses = append(whereClauses, "timestamp >= ?")
-		}
-		args = append(args, filter.StartTime)
-		argIndex++
-	}
-
-	if filter.EndTime > 0 {
-		if s.dbType == "postgres" {
-			whereClauses = append(whereClauses, fmt.Sprintf("timestamp <= $%d", argIndex))
-		} else {
-			whereClauses = append(whereClauses, "timestamp <= ?")
-		}
-		args = append(args, filter.EndTime)
-		argIndex++
-	}
-
-	// Build query
-	whereClause := ""
-	if len(whereClauses) > 0 {
-		whereClause = "WHERE " + strings.Join(whereClauses, " AND ")
-	}
+	whereClause, args, argIndex := s.queryConditions(filter)
 
 	var query string
 	if s.dbType == "postgres" {
@@ -598,4 +548,60 @@ func (s *DatabaseStorage) DB() *sql.DB {
 // DBType returns the database type
 func (s *DatabaseStorage) DBType() string {
 	return s.dbType
+}
+
+func (s *DatabaseStorage) queryConditions(filter *QueryFilter) (string, []interface{}, int) {
+	// Build WHERE clause
+	var whereClauses []string
+	var args []interface{}
+	argIndex := 1
+
+	addCondition := func(column, value string) {
+		if value == "" {
+			return
+		}
+		if s.dbType == "postgres" {
+			whereClauses = append(whereClauses, fmt.Sprintf("%s = $%d", column, argIndex))
+		} else {
+			whereClauses = append(whereClauses, fmt.Sprintf("%s = ?", column))
+		}
+		args = append(args, value)
+		argIndex++
+	}
+
+	addCondition("event_type", filter.EventType)
+	addCondition("user_id", filter.UserID)
+	addCondition("challenge_id", filter.ChallengeID)
+	addCondition("session_id", filter.SessionID)
+	addCondition("channel", filter.Channel)
+	addCondition("result", filter.Result)
+	addCondition("ip", filter.IP)
+
+	if filter.StartTime > 0 {
+		if s.dbType == "postgres" {
+			whereClauses = append(whereClauses, fmt.Sprintf("timestamp >= $%d", argIndex))
+		} else {
+			whereClauses = append(whereClauses, "timestamp >= ?")
+		}
+		args = append(args, filter.StartTime)
+		argIndex++
+	}
+
+	if filter.EndTime > 0 {
+		if s.dbType == "postgres" {
+			whereClauses = append(whereClauses, fmt.Sprintf("timestamp <= $%d", argIndex))
+		} else {
+			whereClauses = append(whereClauses, "timestamp <= ?")
+		}
+		args = append(args, filter.EndTime)
+		argIndex++
+	}
+
+	// Build query
+	whereClause := ""
+	if len(whereClauses) > 0 {
+		whereClause = "WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	return whereClause, args, argIndex
 }
