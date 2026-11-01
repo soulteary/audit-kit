@@ -10,6 +10,24 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [2.1.3] — 2026-11-01
+
+### Changed
+
+- Update `secure-kit/v2` from 2.1.2 to 2.1.3 within the existing major version.
+- Separate wildcard string-filter matching and SQL condition construction
+  without changing criteria, ordering, or positional argument numbering.
+- Update test-only SQLite from 1.60.1 to 1.61.1, libc from 1.77.1 to 1.79.1,
+  and YAML from 3.0.5 to 3.0.6. Database drivers remain caller-registered and
+  do not enter the library root's runtime import graph.
+- Refresh pinned report tools and regenerate complete quality evidence with
+  all six checks at 100% and no issues. The public API is unchanged.
+
+## Historical dependency notes
+
+The following note was already present in earlier published versions and is
+retained as historical context; it is not a new change in 2.1.3.
+
 Dependency refresh only. No API was removed and no call needs rewriting.
 
 - secure-kit is `github.com/soulteary/secure-kit/v2` v2.1.0 (was v2.0.0). No
@@ -288,3 +306,6 @@ needs rewriting — but the observable behaviour changes.
 - **`MaskString` with a negative `keepChars` returns a fully masked string**
   instead of panicking with a slice-bounds error.
 - **Table names are validated as ASCII `[a-zA-Z0-9_]`.**
+
+[Unreleased]: https://github.com/soulteary/audit-kit/compare/v2.1.3...HEAD
+[2.1.3]: https://github.com/soulteary/audit-kit/compare/v2.1.2...v2.1.3
