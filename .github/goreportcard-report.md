@@ -1,31 +1,24 @@
 # Go Report Card
 
-**Grade: A+** (99.0%)
+**Grade: A+** (100.0%)
 
 | Metric | Value |
 | ------ | ----- |
 | Files | 24 |
-| Issues | 2 |
+| Issues | 0 |
 
 ## Checks
 
 | Check | Score |
 | ----- | ----- |
-| go_vet | 100% |
 | gofmt | 100% |
-| gocyclo | 91% |
+| go_vet | 100% |
+| gocyclo | 100% |
 | ineffassign | 100% |
 | license | 100% |
 | misspell | 100% |
 
-## Issues
-
-### gocyclo
-
-- `storage.go`
-  - Line 136: cyclomatic complexity 21 for function (*QueryFilter).Matches
-- `database.go`
-  - Line 440: cyclomatic complexity 16 for function (*DatabaseStorage).Query
+No issues found. Nice work!
 
 ---
 

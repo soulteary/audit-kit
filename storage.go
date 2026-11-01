@@ -141,27 +141,16 @@ func (f *QueryFilter) Matches(record *Record) bool {
 		// No filter is no criteria, so everything matches.
 		return true
 	}
-	if f.EventType != "" && string(record.EventType) != f.EventType {
-		return false
+	for _, criterion := range []struct{ expected, actual string }{
+		{f.EventType, string(record.EventType)}, {f.UserID, record.UserID},
+		{f.ChallengeID, record.ChallengeID}, {f.SessionID, record.SessionID},
+		{f.Channel, record.Channel}, {f.Result, string(record.Result)}, {f.IP, record.IP},
+	} {
+		if criterion.expected != "" && criterion.expected != criterion.actual {
+			return false
+		}
 	}
-	if f.UserID != "" && record.UserID != f.UserID {
-		return false
-	}
-	if f.ChallengeID != "" && record.ChallengeID != f.ChallengeID {
-		return false
-	}
-	if f.SessionID != "" && record.SessionID != f.SessionID {
-		return false
-	}
-	if f.Channel != "" && record.Channel != f.Channel {
-		return false
-	}
-	if f.Result != "" && string(record.Result) != f.Result {
-		return false
-	}
-	if f.IP != "" && record.IP != f.IP {
-		return false
-	}
+
 	if f.StartTime > 0 && record.Timestamp < f.StartTime {
 		return false
 	}
