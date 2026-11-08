@@ -10,6 +10,19 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [2.1.4] - 2026-11-08
+
+### Changed
+
+- Update `secure-kit/v2` from v2.1.3 to v2.1.4. Email, phone and corresponding
+  destination masking inherit Unicode code-point boundaries; ASCII and
+  short-input behavior is unchanged.
+- Keep public APIs, record formats, SQL schemas and storage configuration. No
+  data conversion is required; existing audit rows are not rewritten.
+
+See [release notes](docs/releases/v2.1.4.md) for upgrade and rollback.
+
+
 ## [2.1.3] — 2026-11-01
 
 ### Changed
@@ -307,5 +320,6 @@ needs rewriting — but the observable behaviour changes.
   instead of panicking with a slice-bounds error.
 - **Table names are validated as ASCII `[a-zA-Z0-9_]`.**
 
-[Unreleased]: https://github.com/soulteary/audit-kit/compare/v2.1.3...HEAD
+[Unreleased]: https://github.com/soulteary/audit-kit/compare/v2.1.4...HEAD
+[2.1.4]: https://github.com/soulteary/audit-kit/compare/v2.1.3...v2.1.4
 [2.1.3]: https://github.com/soulteary/audit-kit/compare/v2.1.2...v2.1.3
