@@ -10,6 +10,16 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [2.1.6] - 2026-11-13
+
+### Changed
+
+- Select `secure-kit/v2` v2.1.5, which requires Go 1.27.4 and updates
+  `golang.org/x/crypto` to v0.59.0.
+- Update test-only `modernc.org/sqlite` from v1.61.1 to v1.62.0.
+
+The module path and the public API are unchanged.
+
 ## [2.1.5] - 2026-11-13
 
 ### Security
