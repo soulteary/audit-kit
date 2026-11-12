@@ -10,6 +10,19 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [2.1.5] - 2026-11-13
+
+### Security
+
+- `FileStorage` created the log directory with mode 0755 and log files with
+  mode 0644, so any local user could read audit records. New directories are
+  now created with 0700 and new files, including the file opened after
+  rotation, with 0600. Existing files and directories keep their mode; a
+  process that reads the log under another account needs access granted
+  explicitly.
+
+The module path and the public API are unchanged.
+
 ## [2.1.4] - 2026-11-08
 
 ### Changed

@@ -20,18 +20,26 @@ type FileStorage struct {
 	mu       sync.Mutex
 }
 
+// Audit records hold user identifiers, client addresses and, unless the caller
+// masks them, destinations. New log files and directories are therefore
+// created for the owner only. Existing files and directories keep their mode.
+const (
+	auditDirMode  os.FileMode = 0o700
+	auditFileMode os.FileMode = 0o600
+)
+
 // NewFileStorage creates a new file storage instance.
 // filePath must come from trusted configuration only; do not pass user-controlled
 // paths (path traversal or symlinks could write audit logs to unintended locations).
 func NewFileStorage(filePath string) (*FileStorage, error) {
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, auditDirMode); err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	// Open file in append mode
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, auditFileMode)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
@@ -205,7 +213,7 @@ func (s *FileStorage) Rotate() error {
 	}
 
 	// Open new file
-	file, err := os.OpenFile(s.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(s.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, auditFileMode)
 	if err != nil {
 		return fmt.Errorf("failed to open new file: %w", err)
 	}
