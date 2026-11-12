@@ -21,6 +21,10 @@ also changes the module path. The current one is
   process that reads the log under another account needs access granted
   explicitly.
 
+### Changed
+
+- Require Go 1.27.4, which fixes GO-2026-6859 in `net/http`.
+
 The module path and the public API are unchanged.
 
 ## [2.1.4] - 2026-11-08
