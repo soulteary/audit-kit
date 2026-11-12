@@ -8,9 +8,9 @@ require (
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/lib/pq v1.12.3
 	github.com/redis/go-redis/v9 v9.23.0
-	github.com/soulteary/secure-kit/v2 v2.1.4
+	github.com/soulteary/secure-kit/v2 v2.1.5
 	github.com/stretchr/testify v1.12.1
-	modernc.org/sqlite v1.61.1
+	modernc.org/sqlite v1.62.0
 )
 
 require (
@@ -24,8 +24,8 @@ require (
 	github.com/yuin/gopher-lua v1.1.2 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
-	golang.org/x/sys v0.49.0 // indirect
-	modernc.org/libc v1.79.1 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
