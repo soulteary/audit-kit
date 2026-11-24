@@ -10,6 +10,20 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [2.1.8] - 2026-11-25
+
+### Changed
+
+- Update `github.com/redis/go-redis/v9` from v9.23.0 to v9.24.0.
+- Align the README requirements with the versions declared in `go.mod`.
+
+The update applies to the `redisstore` subpackage. The root package does not import the Redis client.
+
+See the [release notes](docs/releases/v2.1.8.md) for Redis client behavior
+changes and upgrade and rollback guidance.
+
+## [2.1.7] - 2026-11-24
+
 ### Changed
 
 - Update the test and integration-test drivers: `go-sql-driver/mysql` from
@@ -17,7 +31,7 @@ also changes the module path. The current one is
 - Update SQLite's indirect `modernc.org/libc` and `modernc.org/memory`
   requirements to v1.82.13 and v1.13.0.
 
-Prepared for v2.1.7. See the [candidate release notes](docs/releases/v2.1.7.md).
+See the [release notes](docs/releases/v2.1.7.md).
 
 ## [2.1.6] - 2026-11-13
 

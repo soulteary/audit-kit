@@ -7,7 +7,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/go-sql-driver/mysql v1.10.2
 	github.com/lib/pq v1.12.3
-	github.com/redis/go-redis/v9 v9.23.0
+	github.com/redis/go-redis/v9 v9.24.0
 	github.com/soulteary/secure-kit/v2 v2.1.5
 	github.com/stretchr/testify v1.12.1
 	modernc.org/sqlite v1.63.0
