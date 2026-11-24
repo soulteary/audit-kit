@@ -10,6 +10,15 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+### Changed
+
+- Update the test and integration-test drivers: `go-sql-driver/mysql` from
+  v1.10.1 to v1.10.2 and `modernc.org/sqlite` from v1.62.0 to v1.63.0.
+- Update SQLite's indirect `modernc.org/libc` and `modernc.org/memory`
+  requirements to v1.82.13 and v1.13.0.
+
+Prepared for v2.1.7. See the [candidate release notes](docs/releases/v2.1.7.md).
+
 ## [2.1.6] - 2026-11-13
 
 ### Changed
